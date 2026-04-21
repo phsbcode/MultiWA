@@ -3,7 +3,7 @@
 
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
-import { ValidationPipe } from '@nestjs/common';
+import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { AppModule } from './app.module';
@@ -40,7 +40,9 @@ async function bootstrap() {
 
     // Global prefix for REST API
     console.log('🔧 [3/7] Setting global prefix...');
-    app.setGlobalPrefix('api/v1');
+    app.setGlobalPrefix('api/v1', {
+      exclude: [{ path: '/', method: RequestMethod.GET }],
+    });
     console.log('✅ [3/7] Global prefix set');
 
     // CORS

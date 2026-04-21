@@ -45,6 +45,15 @@ export class AuthService {
       },
     });
 
+    await prisma.account.create({
+      data: {
+        workspaceId: workspace.id,
+        name: 'Default Account',
+        description: 'Automatically created for WhatsApp profiles',
+        settings: {},
+      },
+    });
+
     // Create user
     const passwordHash = await this.hashPassword(dto.password);
     const user = await prisma.user.create({
