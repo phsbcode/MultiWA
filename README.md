@@ -52,39 +52,31 @@
 
 ## 🚀 Quick Start
 
-### Prerequisites
-
-- **Node.js** ≥ 20
-- **PostgreSQL** ≥ 16
-- **Redis** ≥ 7
-- **pnpm** ≥ 9
-
-### Option 1: Docker (Recommended for Production)
+### Option 1: Docker — One Command Setup ⚡
 
 ```bash
-# Clone the repository
 git clone https://github.com/ribato22/MultiWA.git
 cd MultiWA
-
-# Configure environment
-cp .env.production.example .env
-
-# Start all services
-docker compose -f docker-compose.production.yml up -d
-
-# API: http://localhost:3333/api/docs
-# Admin: http://localhost:3001
+cp .env.docker .env
+docker compose up -d
 ```
+
+That's it! Access:
+- 🖥️ **Admin Dashboard**: http://localhost:3001
+- 📖 **API Swagger Docs**: http://localhost:3333/api/docs
+- 🔌 **API Endpoint**: http://localhost:3333/api/v1
+
+> **Full stack** (with S3 storage + Nginx proxy): `docker compose --profile full up -d`
 
 ### Option 2: Local Development
 
+**Prerequisites:** Node.js ≥ 20 · PostgreSQL ≥ 16 · Redis ≥ 7 · pnpm ≥ 9
+
 ```bash
-# Clone and install
 git clone https://github.com/ribato22/MultiWA.git
 cd MultiWA
 pnpm install
 
-# Configure environment
 cp .env.example .env
 
 # Setup database
@@ -282,10 +274,10 @@ Detailed deployment guide: [`docs/16-deployment-docker.md`](docs/16-deployment-d
 git clone https://github.com/ribato22/MultiWA.git
 cd MultiWA
 cp .env.production.example .env
-# Edit .env with your settings
+# Edit .env with your settings (JWT_SECRET, DB_PASSWORD, etc.)
 
-# 2. Build and start
-docker compose -f docker-compose.production.yml up -d --build
+# 2. Build and start (with all optional services)
+docker compose --profile full up -d --build
 
 # 3. Run database migrations
 docker exec multiwa-api npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma
@@ -294,6 +286,10 @@ docker exec multiwa-api npx prisma migrate deploy --schema=packages/database/pri
 # API:    http://your-server:3333/api/docs
 # Admin:  http://your-server:3001
 ```
+
+> 💡 For advanced production setups (custom Nginx, external PostgreSQL, SSL), see the
+> [`docker-compose.production.yml`](docker-compose.production.yml) which is optimized
+> for enterprise deployments with pre-configured Nginx reverse proxy.
 
 ---
 
