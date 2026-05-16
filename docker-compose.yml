@@ -1,37 +1,46 @@
-# MultiWA Gateway V1.0.0 - Docker Compose
-# Development environment with PostgreSQL and Redis
+# ============================================
+# MultiWA — Docker Compose
+# Quick Start: cp .env.docker .env && docker compose up -d
+# ============================================
+#
+# Profiles:
+#   default         → API + Admin + PostgreSQL + Redis (minimal)
+#   --profile full  → + MinIO (S3 storage) + Nginx reverse proxy
+#
+# Access:
+#   Admin Dashboard: http://localhost:3001
+#   API Swagger:     http://localhost:3333/api/docs
+#   API Endpoint:    http://localhost:3333/api/v1
 
 services:
-  # ==============================================
-  # PostgreSQL Database
-  # ==============================================
+  # ─── Database ──────────────────────────────
   postgres:
     image: postgres:16-alpine
     container_name: multiwa-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: multiwa
-      POSTGRES_PASSWORD: multiwa123
-      POSTGRES_DB: multiwa_gateway
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-multiwa123}
+      POSTGRES_DB: ${DB_NAME:-multiwa}
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U multiwa -d multiwa_gateway"]
+      test: ["CMD-SHELL", "pg_isready -U multiwa"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - multiwa
 
-  # ==============================================
-  # Redis (Cache + Queue)
-  # ==============================================
+  # ─── Cache & Queue ─────────────────────────
   redis:
     image: redis:7-alpine
     container_name: multiwa-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6380}:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -40,17 +49,90 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - multiwa
 
-  # ==============================================
-  # MinIO (S3-compatible storage for media)
-  # ==============================================
+  # ─── API Server (NestJS + WhatsApp Engine) ─
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    container_name: multiwa-api
+    restart: unless-stopped
+    shm_size: "1gb"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://multiwa:${DB_PASSWORD:-multiwa123}@postgres:5432/${DB_NAME:-multiwa}?schema=public
+      REDIS_URL: redis://redis:6379
+      API_PORT: 3333
+      API_HOST: 0.0.0.0
+      JWT_SECRET: ${JWT_SECRET:-change-this-to-a-random-secret}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-this-refresh-secret}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3001,http://localhost:3333}
+      WHATSAPP_ENGINE: ${DEFAULT_ENGINE:-whatsapp-web-js}
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+      SESSIONS_DIR: /data/sessions
+      # S3/MinIO (optional, for media storage)
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_BUCKET: ${S3_BUCKET:-multiwa-media}
+    ports:
+      - "${API_PORT:-3333}:3333"
+    volumes:
+      - sessions_data:/data/sessions
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3333/api/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - multiwa
+
+  # ─── Admin Dashboard (Next.js) ─────────────
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: admin
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3333}
+    container_name: multiwa-admin
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3333}
+    ports:
+      - "${ADMIN_PORT:-3001}:3001"
+    depends_on:
+      api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3001 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - multiwa
+
+  # ─── MinIO S3 Storage (optional) ───────────
   minio:
     image: minio/minio:latest
     container_name: multiwa-minio
     restart: unless-stopped
+    profiles: ["full"]
     environment:
-      MINIO_ROOT_USER: minio
-      MINIO_ROOT_PASSWORD: minio123
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minio}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minio123}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -62,8 +144,35 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    networks:
+      - multiwa
+
+  # ─── Nginx Reverse Proxy (optional) ────────
+  nginx:
+    image: nginx:alpine
+    container_name: multiwa-nginx
+    restart: unless-stopped
+    profiles: ["full"]
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      api:
+        condition: service_started
+      admin:
+        condition: service_started
+    networks:
+      - multiwa
 
 volumes:
   postgres_data:
   redis_data:
+  sessions_data:
   minio_data:
+
+networks:
+  multiwa:
+    driver: bridge
