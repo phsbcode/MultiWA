@@ -26,6 +26,7 @@ import { StatisticsModule } from './modules/statistics/statistics.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { EventsModule } from './modules/events/events.module';
 import { HealthController } from './health.controller';
+import { RootController } from './root.controller';
 import { ApiKeysModule } from './modules/api-keys/api-keys.module';
 import { AIModule } from './modules/ai/ai.module';
 import { SettingsModule } from './modules/settings/settings.module';
@@ -97,7 +98,7 @@ import { WebSocketModule } from './modules/websocket/websocket.module';
     BulkModule,        // Bulk messaging with variables
     WebSocketModule,   // Real-time event subscriptions
   ],
-  controllers: [HealthController],
+  controllers: [RootController, HealthController],
   providers: [
     {
       provide: APP_GUARD,

@@ -27,7 +27,7 @@ export class AccountsService {
 
     const workspaceIds = user.organization?.workspaces?.map(w => w.id) || [];
 
-    const accounts = await prisma.account.findMany({
+    let accounts = await prisma.account.findMany({
       where: {
         workspaceId: { in: workspaceIds },
         status: 'ACTIVE',
@@ -37,6 +37,21 @@ export class AccountsService {
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    if (accounts.length === 0 && workspaceIds.length > 0) {
+      const account = await prisma.account.create({
+        data: {
+          workspaceId: workspaceIds[0],
+          name: 'Default Account',
+          description: 'Automatically created for WhatsApp profiles',
+          settings: {},
+        },
+        include: {
+          workspace: true,
+        },
+      });
+      accounts = [account];
+    }
 
     return accounts;
   }
