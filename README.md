@@ -14,7 +14,7 @@
   <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.2.0-green.svg" alt="Version" /></a>
   <a href="https://ribato22.github.io/MultiWA/"><img src="https://img.shields.io/badge/🌐_Website-Live-brightgreen.svg" alt="Website" /></a>
   <a href="docker-compose.yml"><img src="https://img.shields.io/badge/docker-one--click-2496ED.svg" alt="Docker" /></a>
-  <a href="https://hub.docker.com/r/ribato22/multiwa-api"><img src="https://img.shields.io/docker/pulls/ribato22/multiwa-api.svg" alt="Docker Pulls" /></a>
+  <a href="https://hub.docker.com/r/ribato/multiwa-api"><img src="https://img.shields.io/docker/pulls/ribato/multiwa-api.svg" alt="Docker Pulls" /></a>
   <a href="https://github.com/ribato22/multiwa/actions/workflows/ci.yml"><img src="https://github.com/ribato22/multiwa/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome" />
   <a href="https://buymeacoffee.com/ribato"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-☕-orange.svg" alt="Buy Me a Coffee" /></a>

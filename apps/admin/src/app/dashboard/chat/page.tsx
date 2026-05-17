@@ -5,6 +5,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
+import { getSocketUrl } from '@/lib/socket';
 import { api, Profile, Conversation } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -162,8 +163,7 @@ export default function ChatPage() {
   useEffect(() => {
     if (!selectedProfile) return;
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3333';
-    const socket = io(`${apiUrl}/ws`, {
+    const socket = io(`${getSocketUrl()}/ws`, {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: Infinity,

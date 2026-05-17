@@ -4,6 +4,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { getSocketUrl } from '@/lib/socket';
 
 interface WebSocketMessage {
   type: string;
@@ -146,7 +147,7 @@ export function useWebSocket({
 
 // Convenience hook for MultiWA message events
 export function useMultiWAMessages(profileId: string, onNewMessage?: (message: any) => void) {
-  const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:3000/ws';
+  const wsUrl = `${getSocketUrl()}/ws`;
   
   const { isConnected, lastMessage, sendMessage } = useWebSocket({
     url: `${wsUrl}/messages/${profileId}`,
@@ -162,7 +163,7 @@ export function useMultiWAMessages(profileId: string, onNewMessage?: (message: a
 
 // Hook for connection status updates
 export function useProfileConnection(profileId: string, onStatusChange?: (status: string) => void) {
-  const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:3000/ws';
+  const wsUrl = `${getSocketUrl()}/ws`;
   
   const { isConnected, lastMessage } = useWebSocket({
     url: `${wsUrl}/profiles/${profileId}`,

@@ -6,6 +6,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
+import { getSocketUrl } from '@/lib/socket';
 
 export default function NewProfilePage() {
   const router = useRouter();
@@ -111,20 +112,7 @@ export default function NewProfilePage() {
   const connectWebSocket = (profileId: string) => {
     // WebSocket must connect directly to API server
     // Next.js rewrites only work for HTTP, not WebSocket
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3333';
-    let wsUrl = apiUrl.replace(/^http/, 'ws');
-    
-    if (typeof window !== 'undefined') {
-      const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-      if (isLocalDev) {
-        // Development: connect directly to API server
-        wsUrl = apiUrl.replace(/^http/, 'ws');
-      } else {
-        // Production: connect via same host (Nginx will proxy to backend)
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        wsUrl = `${wsProtocol}//${window.location.host}`;
-      }
-    }
+    const wsUrl = getSocketUrl();
     
     console.log('Connecting WebSocket to:', wsUrl);
     setStatus('Connecting to server...');

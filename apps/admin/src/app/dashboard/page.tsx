@@ -7,6 +7,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { io, Socket } from 'socket.io-client';
+import { getSocketUrl } from '@/lib/socket';
 import { api, DashboardStats, Profile } from '@/lib/api';
 import { StatCard } from '@/components/ui/stat-card';
 import { ProfileCard, ProfileGrid } from '@/components/ui/profile-card';
@@ -73,8 +74,7 @@ export default function DashboardPage() {
 
     // Connect to Socket.IO for real-time updates
     // Use API URL directly — Next.js rewrites proxy doesn't handle WebSocket
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3333';
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || apiUrl;
+    const wsUrl = getSocketUrl();
     const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
     
     const socket = io(`${wsUrl}/ws`, {

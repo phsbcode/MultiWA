@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { io, Socket } from 'socket.io-client';
+import { getSocketUrl } from '@/lib/socket';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -61,20 +62,7 @@ export default function ProfileDetailPage() {
   // WebSocket connection for real-time updates
   useEffect(() => {
     // Determine WebSocket URL based on environment
-    let wsUrl: string;
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3333';
-    if (typeof window !== 'undefined') {
-      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        // Development: connect directly to API server
-        wsUrl = apiUrl.replace(/^http/, 'ws');
-      } else {
-        // Production: connect via same host (Nginx will proxy to backend)
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        wsUrl = `${wsProtocol}//${window.location.host}`;
-      }
-    } else {
-      wsUrl = apiUrl.replace(/^http/, 'ws');
-    }
+    const wsUrl = getSocketUrl();
 
     // Connect to WebSocket server with /ws namespace (must match backend EventsGateway)
     const socket = io(`${wsUrl}/ws`, {
