@@ -21,11 +21,26 @@ export class AccountsService {
       include: { organization: { include: { workspaces: true } } },
     });
 
-    if (!user) {
+    if (!user || !user.organization) {
       return [];
     }
 
-    const workspaceIds = user.organization?.workspaces?.map(w => w.id) || [];
+    let workspaceIds = user.organization.workspaces?.map(w => w.id) || [];
+
+    // Self-heal: an organization must always have at least one workspace.
+    // Users created outside the normal register() flow can lack one, which
+    // previously surfaced as "No account found" when creating a profile.
+    if (workspaceIds.length === 0) {
+      this.logger.warn(`Organization ${user.organization.id} has no workspace — creating default`);
+      const workspace = await prisma.workspace.create({
+        data: {
+          organizationId: user.organization.id,
+          name: 'Default',
+          slug: 'default',
+        },
+      });
+      workspaceIds = [workspace.id];
+    }
 
     let accounts = await prisma.account.findMany({
       where: {
@@ -38,7 +53,7 @@ export class AccountsService {
       orderBy: { createdAt: 'desc' },
     });
 
-    if (accounts.length === 0 && workspaceIds.length > 0) {
+    if (accounts.length === 0) {
       const account = await prisma.account.create({
         data: {
           workspaceId: workspaceIds[0],

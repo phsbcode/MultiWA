@@ -21,6 +21,9 @@ vi.mock('@multiwa/database', () => ({
     workspace: {
       create: vi.fn(),
     },
+    account: {
+      create: vi.fn(),
+    },
   },
 }));
 
@@ -50,6 +53,7 @@ describe('AuthService', () => {
     vi.mocked(prisma.organization.create).mockReset();
     vi.mocked(prisma.organization.delete).mockReset();
     vi.mocked(prisma.workspace.create).mockReset();
+    vi.mocked(prisma.account.create).mockReset();
 
     mockJwtService.sign.mockReset().mockReturnValue('mock-token');
     mockJwtService.verify.mockReset();
