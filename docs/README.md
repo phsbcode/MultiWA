@@ -41,19 +41,21 @@ Welcome to the MultiWA documentation. MultiWA is a free, open-source WhatsApp AP
 
 ## 🚀 Quick Links
 
-- **GitHub**: [github.com/ribato22/multiwa](https://github.com/ribato22/multiwa)
-- **NPM**: `npm install @multiwa/sdk`
-- **PyPI**: `pip install multiwa`
-- **Packagist**: `composer require multiwa/multiwa`
-- **Docker Hub**: `docker pull multiwa/multiwa`
+- **GitHub**: [github.com/ribato22/MultiWA](https://github.com/ribato22/MultiWA)
+- **Docker image (API)**: [hub.docker.com/r/ribato/multiwa-api](https://hub.docker.com/r/ribato/multiwa-api)
+- **TypeScript SDK source**: [`packages/sdk`](../packages/sdk)
+- **Python SDK source**: [`packages/sdk-python`](../packages/sdk-python)
+- **PHP SDK source**: [`packages/sdk-php`](../packages/sdk-php)
+
+> SDKs ship as in-repo packages today. The public registry entries (`@multiwa/sdk`, `multiwa-sdk`, `multiwa/sdk`) are tracked as a release follow-up; until then, install from this repository or via the package's local path.
 
 ---
 
 ## 🆘 Support
 
-- [Issue Tracker](https://github.com/ribato22/multiwa/issues)
-- [Discussions](https://github.com/ribato22/multiwa/discussions)
-- [Discord Community](https://discord.gg/multiwa)
+- [Issue Tracker](https://github.com/ribato22/MultiWA/issues)
+- [Discussions](https://github.com/ribato22/MultiWA/discussions)
+- [Security Policy](../SECURITY.md)
 
 ---
 

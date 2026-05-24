@@ -8,25 +8,27 @@ Send and receive all types of WhatsApp messages.
 
 ## Message Types
 
+All paths use the global `/api/v1` prefix (Docker default base URL: `http://localhost:3333/api/v1`).
+
 | Type | Endpoint | Description |
 |------|----------|-------------|
-| Text | `POST /messages/text` | Plain text messages |
-| Image | `POST /messages/image` | Images with caption |
-| Video | `POST /messages/video` | Videos with caption |
-| Audio | `POST /messages/audio` | Voice/audio files |
-| Document | `POST /messages/document` | Files/PDFs |
-| Location | `POST /messages/location` | Map locations |
-| Contact | `POST /messages/contact` | Contact cards |
-| Poll | `POST /messages/poll` | Interactive polls |
+| Text | `POST /api/v1/messages/text` | Plain text messages |
+| Image | `POST /api/v1/messages/image` | Images with caption |
+| Video | `POST /api/v1/messages/video` | Videos with caption |
+| Audio | `POST /api/v1/messages/audio` | Voice/audio files |
+| Document | `POST /api/v1/messages/document` | Files/PDFs |
+| Location | `POST /api/v1/messages/location` | Map locations |
+| Contact | `POST /api/v1/messages/contact` | Contact cards |
+| Poll | `POST /api/v1/messages/poll` | Interactive polls |
 
 ---
 
 ## Send Text
 
 ```bash
-curl -X POST http://localhost:3001/api/messages/text \
+curl -X POST http://localhost:3333/api/v1/messages/text \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: YOUR_KEY" \
+  -H "x-api-key: YOUR_KEY" \
   -d '{
     "profileId": "profile-123",
     "to": "628123456789",
@@ -39,9 +41,9 @@ curl -X POST http://localhost:3001/api/messages/text \
 ## Send Image
 
 ```bash
-curl -X POST http://localhost:3001/api/messages/image \
+curl -X POST http://localhost:3333/api/v1/messages/image \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: YOUR_KEY" \
+  -H "x-api-key: YOUR_KEY" \
   -d '{
     "profileId": "profile-123",
     "to": "628123456789",
@@ -55,9 +57,9 @@ curl -X POST http://localhost:3001/api/messages/image \
 ## Send Poll
 
 ```bash
-curl -X POST http://localhost:3001/api/messages/poll \
+curl -X POST http://localhost:3333/api/v1/messages/poll \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: YOUR_KEY" \
+  -H "x-api-key: YOUR_KEY" \
   -d '{
     "profileId": "profile-123",
     "to": "628123456789",
@@ -100,7 +102,7 @@ For groups, use the full JID: `123456789-123456@g.us`
 ## Rate Limits
 
 - **Per profile**: 30 messages/minute (adjustable)
-- **Bulk API**: Use `/bulk/send` for high-volume
+- **Bulk API**: Use `/api/v1/bulk/send` for high-volume
 
 ---
 

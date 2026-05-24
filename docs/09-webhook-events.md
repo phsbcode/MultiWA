@@ -8,9 +8,11 @@ MultiWA delivers real-time events to your HTTP endpoints via webhooks.
 
 ## Configuration
 
+All paths use the API base URL described in [API Specification](./07-api-specification.md#71-overview): Docker default is `http://localhost:3333/api/v1`.
+
 ### Per-Profile Webhook
 ```bash
-POST /api/profiles/:id/webhook
+POST /api/v1/profiles/:id/webhook
 {
   "url": "https://yourserver.com/webhook",
   "secret": "optional-hmac-secret",
@@ -20,7 +22,7 @@ POST /api/profiles/:id/webhook
 
 ### Global Webhook
 ```bash
-POST /api/webhooks
+POST /api/v1/webhooks
 {
   "url": "https://yourserver.com/webhook",
   "secret": "your-secret",
