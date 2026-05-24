@@ -27,7 +27,11 @@
     "test": "turbo test",
     "clean": "turbo clean && rm -rf node_modules",
     "format": "prettier --write \"**/*.{ts,tsx,md,json}\"",
-    "typecheck": "turbo typecheck"
+    "typecheck": "turbo typecheck",
+    "check:public-boundary": "bash scripts/check-public-boundary.sh",
+    "check:api-contract": "node scripts/check-api-contract.mjs",
+    "check:api-contract:update": "node scripts/check-api-contract.mjs --update",
+    "check:release": "git diff --check && pnpm run check:public-boundary && pnpm run check:api-contract"
   },
   "devDependencies": {
     "prettier": "^3.2.5",

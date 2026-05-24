@@ -51,6 +51,10 @@ pnpm-debug.log*
 # Testing
 coverage/
 
+# Python cache
+__pycache__/
+*.pyc
+
 # WhatsApp sessions
 sessions/
 .wwebjs_auth/
@@ -60,8 +64,22 @@ sessions/
 plugins/*/node_modules/
 
 # Temporary
+.tmp/
 tmp/
 temp/
+
+# BLAST internal memory (operational detail, not public-safe)
+/findings.md
+/progress.md
+/task_plan.md
+/gemini.md
+/CLAUDE.md
+
+# Internal-only SOPs (server paths, hardening flow, deployment details)
+/architecture/pln-batam-hardening.md
+/architecture/internal-deploy-runbook.md
+/architecture/worker-recovery.md
+/architecture/link-verification.md
 
 # Docusaurus
 docs-site/.docusaurus/

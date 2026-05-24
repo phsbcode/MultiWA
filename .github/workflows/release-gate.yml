@@ -1,0 +1,60 @@
+name: Release Gate
+
+# Public-safe release gate. No secrets, no deploy, no .env, no external services.
+# Inputs are limited to repository state (git ls-files, file content).
+# We do not consume github.event.* user-controlled fields, so there is no
+# command-injection surface here.
+
+on:
+  push:
+    branches: [main, production]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-gate:
+    name: Public boundary and API contract checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify no whitespace errors or conflict markers
+        run: git diff --check
+
+      - name: Public boundary scan
+        run: pnpm run check:public-boundary
+
+      - name: API contract drift check
+        run: pnpm run check:api-contract
+
+      - name: Confirm no internal-only files are tracked
+        run: |
+          set -e
+          INTERNAL_PATTERNS='^(findings\.md|progress\.md|task_plan\.md|gemini\.md|CLAUDE\.md|architecture/(pln-batam-hardening|internal-deploy-runbook|worker-recovery|link-verification)\.md|\.tmp/)'
+          tracked_internal=$(git ls-files | grep -E "$INTERNAL_PATTERNS" || true)
+          if [ -n "$tracked_internal" ]; then
+            echo "::error::Internal-only files are tracked by git. They must remain gitignored."
+            echo "$tracked_internal"
+            exit 1
+          fi
+          echo "Internal-only files are not tracked. OK."

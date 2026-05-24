@@ -1,0 +1,869 @@
+{
+  "generatedFrom": "apps/api/src/**/*.controller.ts",
+  "globalPrefix": "api/v1",
+  "swaggerPath": "api/docs",
+  "note": "Regenerate with: node scripts/check-api-contract.mjs --update",
+  "excludedDecorators": [
+    "@ApiExcludeController()",
+    "@ApiExcludeEndpoint()"
+  ],
+  "routeCount": 214,
+  "routes": [
+    {
+      "method": "DELETE",
+      "path": "/api/v1/account/delete"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/account/export"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/accounts"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/accounts"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/accounts/:accountId/profiles"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/accounts/:accountId/profiles"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/accounts/:accountId/profiles/:profileId"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/accounts/:accountId/profiles/:profileId"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/accounts/:accountId/profiles/:profileId/connect"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/accounts/:accountId/profiles/:profileId/disconnect"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/accounts/:accountId/profiles/:profileId/qr"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/accounts/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/accounts/:id"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/accounts/:id"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/ai/auto-reply"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/ai/complete"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/ai/knowledge/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/ai/knowledge/:profileId"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/ai/knowledge/:profileId/search"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/ai/knowledge/:profileId/text"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/ai/sentiment"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/ai/status"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/ai/translate"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/api-keys"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/api-keys"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/api-keys/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/audit/actions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/audit/logs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/audit/summary"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/2fa/backup-codes"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/2fa/disable"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/2fa/enable"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/2fa/setup"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/2fa/verify"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/auth/account"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/change-password"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/login"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/logout"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/me"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/preferences"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/auth/preferences"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/refresh"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/register"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/auth/sessions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/sessions"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/auth/sessions/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/automation"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/automation"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/automation/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/automation/:id"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/automation/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/automation/:id/stats"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/automation/:id/test"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/automation/:id/toggle"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/automation/reorder"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/autoreply"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/autoreply"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/autoreply/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/autoreply/:id"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/autoreply/:id"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/autoreply/:id/toggle"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/autoreply/ai-hook"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/autoreply/ai-hook/:profileId"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/autoreply/quick-replies"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/autoreply/quick-replies"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/autoreply/quick-replies/:id"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/autoreply/webhook-reply"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/autoreply/webhook-reply/:profileId"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/broadcast"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/broadcast"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/broadcast/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/broadcast/:id"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/broadcast/:id"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/broadcast/:id/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/broadcast/:id/pause"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/broadcast/:id/recipients"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/broadcast/:id/resume"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/broadcast/:id/schedule"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/broadcast/:id/start"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/broadcast/:id/stats"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/bulk/batch/:batchId"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/bulk/batch/:batchId/cancel"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/bulk/batches"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/bulk/send"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/contacts"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/contacts"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/contacts/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/contacts/:id"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/contacts/:id"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/contacts/:id/tags"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/contacts/:id/tags"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/contacts/export/csv"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/contacts/import"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/contacts/import/csv"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/contacts/profile/:profileId/validate"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/contacts/profile/:profileId/validate/:phone"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/contacts/sync/whatsapp"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/conversations"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/conversations/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/conversations/:id"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/conversations/:id/archive"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/conversations/:id/messages"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/conversations/:id/messages"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/conversations/:id/mute"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/conversations/:id/pin"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/conversations/:id/read"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/conversations/:id/unarchive"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/groups"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/groups/:groupId"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/groups/:groupId"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/groups/:groupId/invite-link"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/groups/:groupId/invite-link/revoke"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/groups/:groupId/leave"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/groups/:groupId/participants/add"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/groups/:groupId/participants/demote"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/groups/:groupId/participants/promote"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/groups/:groupId/participants/remove"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/groups/profile/:profileId"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/health"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/health/ready"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/hooks"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/hooks"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/hooks/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/integrations/config"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/integrations/config"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/integrations/test"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/messages/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/messages/:id"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/messages/audio"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/messages/contact"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/messages/conversation/:conversationId"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/messages/delete-for-everyone"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/messages/document"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/messages/image"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/messages/location"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/messages/mark-read"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/messages/poll"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/messages/profile/:profileId"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/messages/reaction"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/messages/reply"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/messages/schedule"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/messages/schedule/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/messages/schedule/:profileId"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/messages/text"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/messages/typing"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/messages/video"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/notifications"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/notifications"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/notifications/:id"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/notifications/:id/read"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/notifications/push/subscribe"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/notifications/push/subscriptions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/notifications/push/test"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/notifications/push/unsubscribe"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/notifications/push/vapid-key"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/notifications/read-all"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/notifications/unread-count"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/organizations/current"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/organizations/current"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/organizations/members"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/organizations/members"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/organizations/members/:id"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/organizations/members/:id/role"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/profiles"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/profiles"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/profiles/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/profiles/:id"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/profiles/:id"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/profiles/:id/connect"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/profiles/:id/disconnect"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/profiles/:id/status"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/rbac/assign"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/rbac/organizations/:id/seed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/rbac/permissions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/rbac/roles"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/rbac/roles"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/rbac/roles/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/rbac/roles/:id"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/rbac/roles/:id"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/rbac/users/:userId/organizations/:orgId"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/rbac/users/:userId/permissions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/rbac/users/:userId/roles"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/settings/smtp"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/settings/smtp"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/settings/smtp/test"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/settings/storage"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/settings/storage"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/settings/storage/test"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/statistics/automations"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/statistics/broadcasts"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/statistics/contacts"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/statistics/dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/statistics/messages"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/statistics/messages/trend"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/statistics/response-time"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/templates"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/templates"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/templates/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/templates/:id"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/templates/:id"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/templates/:id/duplicate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/templates/:id/preview"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/uploads/media"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/webhooks"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/webhooks"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/webhooks/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/webhooks/:id"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/webhooks/:id"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/webhooks/:id/test"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/workspaces"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/workspaces"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/workspaces/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/workspaces/:id"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/workspaces/:id"
+    }
+  ]
+}
