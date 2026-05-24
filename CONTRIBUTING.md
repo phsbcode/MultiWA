@@ -49,6 +49,57 @@ pnpm install
 pnpm dev
 ```
 
+## Release Checks
+
+Before opening a pull request, run the release gate locally. The same checks
+run in CI via `.github/workflows/release-gate.yml`.
+
+```bash
+# Composite gate: whitespace check, public boundary scan, API contract check
+pnpm check:release
+```
+
+Individual checks:
+
+```bash
+pnpm check:public-boundary   # secret / private-IP / conflict-marker scan
+pnpm check:api-contract      # source vs snapshot vs docs/07-api-specification.md
+```
+
+### When you change an API route
+
+If you add, rename, remove, or change a method on any
+`apps/api/src/**/*.controller.ts`, update **both** of these in the same
+commit:
+
+1. `docs/07-api-specification.md` — add or update the table row using the
+   exact shape:
+
+   ```markdown
+   | `METHOD` | `/path` | Short description |
+   ```
+
+   Path parameters may be written as `:id` or `{id}`; both are accepted.
+
+2. The route snapshot:
+
+   ```bash
+   pnpm check:api-contract:update
+   ```
+
+   This refreshes `scripts/api-routes.snapshot.json` from the current
+   controller decorators. Commit the regenerated snapshot together with the
+   docs and code change.
+
+Controllers carrying `@ApiExcludeController()` (or methods carrying
+`@ApiExcludeEndpoint()`) are intentionally excluded from the public API
+surface and therefore from both the snapshot and the docs.
+
+If the gate is failing locally, the error output lists exactly which routes
+are missing from the snapshot or from the docs, plus the recovery command.
+No live server, Swagger fetch, or credential is required for any of these
+checks.
+
 ## Project Structure
 
 ```
