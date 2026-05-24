@@ -5,15 +5,15 @@ build-backend = "hatchling.build"
 [project]
 name = "multiwa"
 version = "1.0.0"
-description = "Python SDK for MultiWA - WhatsApp Business API Gateway"
+description = "Official Python SDK for the MultiWA WhatsApp Business API Gateway."
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "MultiWA Team", email = "dev@multiwa.io"}
+    {name = "MultiWA Team"}
 ]
-keywords = ["whatsapp", "api", "messaging", "automation", "multiwa"]
+keywords = ["whatsapp", "api", "messaging", "automation", "multiwa", "gateway", "whatsapp-api"]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -21,8 +21,9 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Topic :: Communications",
-    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications :: Chat",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 requires-python = ">=3.9"
 dependencies = [
@@ -40,9 +41,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/multiwa/multiwa-python"
-Documentation = "https://docs.multiwa.io"
-Repository = "https://github.com/multiwa/multiwa-python"
+Homepage = "https://github.com/ribato22/MultiWA/tree/main/packages/sdk-python#readme"
+Repository = "https://github.com/ribato22/MultiWA"
+Issues = "https://github.com/ribato22/MultiWA/issues"
+Changelog = "https://github.com/ribato22/MultiWA/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.sdist]
 include = [

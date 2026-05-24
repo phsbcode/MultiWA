@@ -1,7 +1,7 @@
 // MultiWA Gateway SDK
 // packages/sdk/src/index.ts
 
-export { MultiWAClient, type MultiWAClientOptions } from './client';
+export { MultiWAClient, joinApiUrl, type MultiWAClientOptions } from './client';
 export { MessageClient } from './clients/messages';
 export { ContactClient } from './clients/contacts';
 export { ConversationClient } from './clients/conversations';

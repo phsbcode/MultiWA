@@ -9,9 +9,44 @@ Official PHP SDK for [MultiWA](https://github.com/ribato22/multiwa) - WhatsApp B
 
 ## Installation
 
-```bash
-composer require multiwa/multiwa-php
+The SDK is available in this repository today. Public registry publishing
+(`multiwa/multiwa-php` on Packagist) is tracked as a release follow-up and
+is **not yet verified**, so do not assume
+`composer require multiwa/multiwa-php` resolves to this package on
+Packagist.
+
+Until the registry release is verified, install from this repository using
+a Composer `path` or `vcs` repository entry:
+
+```json
+// composer.json in your project
+{
+  "repositories": [
+    {
+      "type": "path",
+      "url": "../multiwa/packages/sdk-php"
+    }
+  ],
+  "require": {
+    "multiwa/multiwa-php": "*"
+  }
+}
 ```
+
+Or via VCS:
+
+```json
+{
+  "repositories": [
+    {
+      "type": "vcs",
+      "url": "https://github.com/ribato22/MultiWA"
+    }
+  ]
+}
+```
+
+Then run `composer install`.
 
 ## Quick Start
 
@@ -20,10 +55,13 @@ composer require multiwa/multiwa-php
 
 use MultiWA\MultiWA;
 
-// Initialize the client
+// Initialize the client. baseUrl must include the API prefix /api/v1.
+//   Local dev: http://localhost:3000/api/v1
+//   Docker:    http://localhost:3333/api/v1
+//   Prod:      https://your-multiwa-instance.com/api/v1
 $client = new MultiWA(
-    baseUrl: 'https://your-multiwa-instance.com/api',
-    apiKey: 'your-api-key'
+    baseUrl: 'https://your-multiwa-instance.com/api/v1',
+    apiKey: 'your-api-key',
 );
 
 // Send a text message

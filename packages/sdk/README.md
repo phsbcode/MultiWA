@@ -1,13 +1,24 @@
 # @multiwa/sdk
 
-TypeScript SDK for MultiWA Gateway API
+TypeScript SDK for the MultiWA Gateway API.
 
 ## Installation
 
+The SDK is available in this repository today. Public registry publishing
+(`@multiwa/sdk` on NPM) is tracked as a release follow-up and is **not yet
+verified**, so do not assume `npm install @multiwa/sdk` resolves to this
+package on the registry.
+
+Until the registry release is verified, install from this repository:
+
 ```bash
-npm install @multiwa/sdk
-# or
-pnpm add @multiwa/sdk
+# Inside the MultiWA monorepo, the SDK is already part of the workspace
+pnpm install
+
+# In an external project, install from a local path
+pnpm add file:../multiwa/packages/sdk
+# or directly from a git ref
+pnpm add github:ribato22/MultiWA#main
 ```
 
 ## Quick Start
@@ -17,7 +28,11 @@ import { MultiWAClient } from '@multiwa/sdk';
 
 const client = new MultiWAClient({
   apiKey: 'your-api-key',
-  baseUrl: 'http://localhost:3000', // optional
+  // Required to point at the API prefix. Pick one:
+  //   Local dev: http://localhost:3000/api/v1   (default if omitted)
+  //   Docker:    http://localhost:3333/api/v1
+  //   Prod:      https://your-host/api/v1
+  baseUrl: 'http://localhost:3333/api/v1',
 });
 
 // Send a text message

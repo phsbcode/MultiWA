@@ -4,8 +4,19 @@ Official Python SDK for [MultiWA](https://github.com/ribato22/multiwa) - WhatsAp
 
 ## Installation
 
+The SDK is available in this repository today. Public registry publishing
+(`multiwa` on PyPI) is tracked as a release follow-up and is **not yet
+verified**, so do not assume `pip install multiwa` resolves to this package
+on the registry.
+
+Until the registry release is verified, install from this repository:
+
 ```bash
-pip install multiwa
+# From the MultiWA monorepo (recommended for contributors)
+pip install -e packages/sdk-python
+
+# From a git ref
+pip install "multiwa @ git+https://github.com/ribato22/MultiWA.git#subdirectory=packages/sdk-python"
 ```
 
 ## Quick Start
@@ -13,10 +24,13 @@ pip install multiwa
 ```python
 from multiwa import MultiWA
 
-# Initialize the client
+# Initialize the client. base_url must include the API prefix /api/v1.
+#   Local dev: http://localhost:3000/api/v1
+#   Docker:    http://localhost:3333/api/v1
+#   Prod:      https://your-multiwa-instance.com/api/v1
 client = MultiWA(
-    base_url="https://your-multiwa-instance.com/api",
-    api_key="your-api-key"
+    base_url="https://your-multiwa-instance.com/api/v1",
+    api_key="your-api-key",
 )
 
 # Send a text message

@@ -10,7 +10,13 @@ import { WebhookClient } from './clients/webhooks';
 import { AutomationClient } from './clients/automation';
 
 export interface MultiWAClientOptions {
-  /** API base URL (default: http://localhost:3000) */
+  /**
+   * API base URL. Must include the API prefix `/api/v1`.
+   *
+   * - Local dev default: `http://localhost:3000/api/v1`
+   * - Docker default:    `http://localhost:3333/api/v1`
+   * - Production:        `https://your-host/api/v1`
+   */
   baseUrl?: string;
   /** API key for authentication */
   apiKey: string;
@@ -18,6 +24,27 @@ export interface MultiWAClientOptions {
   timeout?: number;
   /** Custom headers to include in all requests */
   headers?: Record<string, string>;
+}
+
+/**
+ * Join an API base URL with an endpoint path while preserving the base path.
+ *
+ * `new URL('/messages/text', 'http://host/api/v1')` would drop `/api/v1`
+ * because a path beginning with `/` is treated as absolute. This helper
+ * normalizes both sides and concatenates them, so the base path survives.
+ *
+ * Examples:
+ *   joinApiUrl('http://localhost:3333/api/v1',  'messages/text')
+ *     => 'http://localhost:3333/api/v1/messages/text'
+ *   joinApiUrl('http://localhost:3333/api/v1',  '/messages/text')
+ *     => 'http://localhost:3333/api/v1/messages/text'
+ *   joinApiUrl('http://localhost:3333/api/v1/', 'messages/text')
+ *     => 'http://localhost:3333/api/v1/messages/text'
+ */
+export function joinApiUrl(baseUrl: string, path: string): string {
+  const base = String(baseUrl || '').replace(/\/+$/, '');
+  const rel = String(path || '').replace(/^\/+/, '');
+  return rel.length ? `${base}/${rel}` : base;
 }
 
 export class MultiWAClient {
@@ -34,7 +61,7 @@ export class MultiWAClient {
 
   constructor(options: MultiWAClientOptions) {
     this.options = {
-      baseUrl: options.baseUrl || 'http://localhost:3000',
+      baseUrl: options.baseUrl || 'http://localhost:3000/api/v1',
       apiKey: options.apiKey,
       timeout: options.timeout || 30000,
       headers: options.headers || {},
@@ -59,7 +86,9 @@ export class MultiWAClient {
       query?: Record<string, any>;
     }
   ): Promise<T> {
-    const url = new URL(path, this.options.baseUrl);
+    // Use joinApiUrl so the base path (e.g. /api/v1) is preserved even when
+    // the endpoint path starts with a leading slash.
+    const url = new URL(joinApiUrl(this.options.baseUrl, path));
 
     // Add query parameters
     if (options?.query) {
