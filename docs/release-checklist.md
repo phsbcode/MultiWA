@@ -19,7 +19,7 @@ everything that needs human attention.
       refreshed via `pnpm check:api-contract:update` and the docs table
       row was added or updated in the same commit.
 - [ ] No internal-only file is tracked (the workflow checks this; run
-      `git ls-files | grep -E 'findings|progress|task_plan|gemini|CLAUDE|pln-batam|internal-deploy|worker-recovery|link-verification|\\.tmp/'`
+      `git ls-files | grep -E 'findings|progress|task_plan|gemini|CLAUDE|architecture/|\\.tmp/'`
       to mirror it locally).
 
 ## 2. SDK Build and Tests
@@ -114,9 +114,8 @@ curl -fsSI http://127.0.0.1:3001/
 
 ## What this checklist does **not** cover
 
-- Internal PLN Batam server deployment. That flow lives in
-  `architecture/internal-deploy-runbook.md` (gitignored, internal-only)
-  and is not part of the public release.
+- Private/internal server deployment. Any such flow lives in
+  internal-only notes (gitignored) and is not part of the public release.
 - Internal credential rotation, hardening of the live server, or any
   operational task tied to a specific deployment.
 - Marketing or social posts. Treat the README and the CHANGELOG as the

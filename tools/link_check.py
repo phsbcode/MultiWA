@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""BLAST Link handshake for MultiWA.
+"""Dependency and connectivity check for MultiWA.
 
 This script intentionally prints no secret values. Detailed output is written to
 .tmp/link_check.json with secrets redacted or omitted.
@@ -191,7 +191,7 @@ def check_multiwa_containers() -> dict[str, str]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="BLAST Link handshake for MultiWA")
+    parser = argparse.ArgumentParser(description="Dependency and connectivity check for MultiWA")
     parser.add_argument(
         "--env-file",
         default=".env",
@@ -304,7 +304,7 @@ def main() -> int:
     TMP_DIR.mkdir(exist_ok=True)
     REPORT_PATH.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
-    print(f"BLAST Link check: {overall}")
+    print(f"Connectivity check: {overall}")
     for check in checks:
         print(f"- {check['name']}: {check['status']} - {check['details']}")
     print(f"Report: {REPORT_PATH.relative_to(PROJECT_ROOT)}")

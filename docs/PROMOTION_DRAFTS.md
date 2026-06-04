@@ -30,7 +30,7 @@ docker compose up -d
 - 🐳 **Docker Ready** — One-command setup, production containers with healthchecks
 
 ### Screenshots:
-[Dashboard](https://raw.githubusercontent.com/ribato22/MultiWA/main/docs/screenshots/dashboard.png) | [Chat](https://raw.githubusercontent.com/ribato22/MultiWA/main/docs/screenshots/chat.png) | [Broadcast](https://raw.githubusercontent.com/ribato22/MultiWA/main/docs/screenshots/broadcast.png) | [Analytics](https://raw.githubusercontent.com/ribato22/MultiWA/main/docs/screenshots/analytics.png)
+[Contacts](https://raw.githubusercontent.com/ribato22/MultiWA/main/docs/screenshots/contacts.png) | [Automation](https://raw.githubusercontent.com/ribato22/MultiWA/main/docs/screenshots/automation.png) | [Profiles](https://raw.githubusercontent.com/ribato22/MultiWA/main/docs/screenshots/profiles.png) | [Settings](https://raw.githubusercontent.com/ribato22/MultiWA/main/docs/screenshots/settings.png)
 
 ### Tech stack:
 NestJS + Fastify (API) · Next.js 14 (Dashboard) · PostgreSQL + Redis · BullMQ Workers · Socket.IO

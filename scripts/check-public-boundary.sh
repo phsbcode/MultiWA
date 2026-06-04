@@ -9,7 +9,7 @@
 #
 # Implementation notes:
 #   - Uses `git ls-files` so only tracked content is scanned; untracked files
-#     (BLAST memory, internal SOPs, .tmp/, sessions/, etc.) are out of scope
+#     (local-only notes, internal SOPs, .tmp/, sessions/, etc.) are out of scope
 #     by construction and cannot reach a public push.
 #   - Uses GNU/BSD `grep -nE` (POSIX ERE). No PCRE so no `\b` or `\d`.
 #   - Per-pattern loops, not one big alternation, because long shell-quoted

@@ -50,7 +50,7 @@ jobs:
       - name: Confirm no internal-only files are tracked
         run: |
           set -e
-          INTERNAL_PATTERNS='^(findings\.md|progress\.md|task_plan\.md|gemini\.md|CLAUDE\.md|architecture/(pln-batam-hardening|internal-deploy-runbook|worker-recovery|link-verification)\.md|\.tmp/)'
+          INTERNAL_PATTERNS='^(findings\.md|progress\.md|task_plan\.md|gemini\.md|CLAUDE\.md|architecture/|\.tmp/)'
           tracked_internal=$(git ls-files | grep -E "$INTERNAL_PATTERNS" || true)
           if [ -n "$tracked_internal" ]; then
             echo "::error::Internal-only files are tracked by git. They must remain gitignored."

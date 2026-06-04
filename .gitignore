@@ -68,18 +68,16 @@ plugins/*/node_modules/
 tmp/
 temp/
 
-# BLAST internal memory (operational detail, not public-safe)
+# Local-only working notes (never public)
 /findings.md
 /progress.md
 /task_plan.md
 /gemini.md
 /CLAUDE.md
+/docs/superpowers/
 
-# Internal-only SOPs (server paths, hardening flow, deployment details)
-/architecture/pln-batam-hardening.md
-/architecture/internal-deploy-runbook.md
-/architecture/worker-recovery.md
-/architecture/link-verification.md
+# Internal-only operational notes and SOPs (never public)
+/architecture/
 
 # Docusaurus
 docs-site/.docusaurus/

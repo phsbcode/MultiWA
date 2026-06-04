@@ -149,12 +149,12 @@ pnpm --filter admin dev   # Admin on http://localhost:3001
 ## 📸 Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/dashboard.png" alt="Dashboard" width="48%" />
-  <img src="docs/screenshots/chat.png" alt="Chat" width="48%" />
+  <img src="docs/screenshots/contacts.png" alt="Contacts" width="48%" />
+  <img src="docs/screenshots/automation.png" alt="Automation" width="48%" />
 </p>
 <p align="center">
-  <img src="docs/screenshots/broadcast.png" alt="Broadcast" width="48%" />
-  <img src="docs/screenshots/analytics.png" alt="Analytics" width="48%" />
+  <img src="docs/screenshots/profiles.png" alt="Profiles" width="48%" />
+  <img src="docs/screenshots/settings.png" alt="Settings" width="48%" />
 </p>
 
 <p align="center">
@@ -330,8 +330,8 @@ It performs three checks:
   [`docs/07-api-specification.md`](docs/07-api-specification.md). If any
   side drifts, the gate fails with a precise list of routes that are
   added, removed, or missing from the docs.
-- **No internal-only files tracked** — fails if any BLAST memory or
-  internal SOP slips into the public tree.
+- **No internal-only files tracked** — fails if any internal-only
+  working file or note slips into the public tree.
 
 Run the gate locally before opening a PR:
 

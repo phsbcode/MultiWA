@@ -25,8 +25,8 @@ internal or production environment.
   saved credentials cannot appear on screen.
 - A clean shell with no command history, no aliases, and no shell prompt
   hostname.
-- A throwaway WhatsApp number for the QR scan (never your personal or
-  PLN Batam number).
+- A throwaway WhatsApp number for the QR scan (never your personal
+  number).
 
 ---
 
@@ -86,7 +86,7 @@ visible, re-record or post-process to blur/redact.
   Authorization headers, and any `apiKey`/`x-api-key` fields. Use
   obvious placeholders like `Bearer eyJ***` in voiced-over reproductions.
 - **Internal hostnames and IPs.** Do not show any domain other than
-  `localhost` or `example.com`. No `*.plnbatam.com`, no RFC1918 IPs, no
+  `localhost` or `example.com`. No internal hostnames, no RFC1918 IPs, no
   internal admin URLs. The capture stack must run from `localhost`.
 - **Customer or organization data.** No real customer names, no real
   contact entries, no real conversation history. Seed the dashboard with
@@ -135,16 +135,15 @@ Once published, the demo can be referenced from:
 - `docs/README.md` (Getting Started section).
 - The GitHub release notes for the version it lands in.
 
-Do not embed in any file that is internal-only (`findings.md`,
-`progress.md`, `task_plan.md`, `gemini.md`, internal SOPs).
+Do not embed the demo in any internal-only working file or note.
 
 ---
 
 ## What Not To Do
 
-- Do not record from any internal server, jump host, or
-  `*.plnbatam.com` host. The MultiWA repository is the public face of the
-  project; the internal PLN Batam deployment is separate by policy.
+- Do not record from any internal, staging, or production server. The
+  MultiWA repository is the public face of the project; keep any private
+  deployment separate.
 - Do not screenshot a session that has any of the redacted items above
   still visible "just for context."
 - Do not use stock-looking marketing voiceover. Captioned text on screen

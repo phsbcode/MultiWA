@@ -237,7 +237,7 @@ Before exposing the deployment to real users, confirm:
 | `redis-cli ping` returns no PONG | Redis not started or different password | `docker logs multiwa-redis`; if you set a Redis password ensure `REDIS_URL` uses it. |
 | `curl http://localhost:3333/api/docs` returns 404 | Wrong port, or the API is still booting | Wait for `MultiWA Gateway API running` in the API logs; verify port mapping with `docker port multiwa-api`. |
 
-If you keep the BLAST hardening rules from the repository in mind, you can also use these as a quick sanity probe:
+You can also use these as a quick sanity probe:
 
 ```bash
 docker exec multiwa-api sh -c 'echo NODE_ENV=$NODE_ENV'   # expect: production
