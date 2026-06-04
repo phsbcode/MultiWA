@@ -19,7 +19,7 @@ everything that needs human attention.
       refreshed via `pnpm check:api-contract:update` and the docs table
       row was added or updated in the same commit.
 - [ ] No internal-only file is tracked (the workflow checks this; run
-      `git ls-files | grep -E 'findings|progress|task_plan|gemini|CLAUDE|architecture/|\\.tmp/'`
+      `git ls-files | grep -E 'findings|progress|task_plan|architecture/|\\.tmp/'`
       to mirror it locally).
 
 ## 2. SDK Build and Tests
