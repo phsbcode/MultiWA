@@ -49,12 +49,12 @@ const nextConfig = {
   async rewrites() {
     // INTERNAL_API_URL: used for server-side proxy (Docker internal network)
     // NEXT_PUBLIC_API_URL: used for client-side requests (browser access)
-    // In Docker: INTERNAL_API_URL=http://api:3333, NEXT_PUBLIC_API_URL=http://localhost:3333
-    // In local dev: both default to http://localhost:3333
+    // In Docker: INTERNAL_API_URL=http://api:3333, NEXT_PUBLIC_API_URL=http://127.0.0.1:3333
+    // In local dev: both default to http://127.0.0.1:3333
     const apiUrl =
       process.env.INTERNAL_API_URL ||
       process.env.NEXT_PUBLIC_API_URL ||
-      "http://localhost:3333";
+      "http://127.0.0.1:3333";
     return [
       {
         // Frontend calls /api/v1/... which gets proxied to API backend

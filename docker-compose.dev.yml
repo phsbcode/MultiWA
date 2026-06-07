@@ -110,9 +110,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: ["node", "dist/main.js"]
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3333/api/docs"]
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3333', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))\""]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -128,7 +127,7 @@ services:
     working_dir: /app
     environment:
       NODE_ENV: development
-      NEXT_PUBLIC_API_URL: http://localhost:3333
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:3333
       INTERNAL_API_URL: http://api:3333
       PORT: 3001
     ports:

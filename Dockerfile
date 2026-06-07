@@ -53,8 +53,10 @@ RUN pnpm --filter @multiwa/api build || true
 RUN test -f apps/api/dist/main.js && echo "✅ API build OK" || (echo "❌ API build failed" && exit 1)
 
 # Build Admin Dashboard
-ARG NEXT_PUBLIC_API_URL=http://localhost:3333
+ARG NEXT_PUBLIC_API_URL=http://127.0.0.1:3333
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ARG INTERNAL_API_URL=http://api:3333
+ENV INTERNAL_API_URL=$INTERNAL_API_URL
 RUN pnpm --filter @multiwa/admin build || true
 
 
@@ -109,6 +111,10 @@ RUN mkdir -p /app/node_modules/@prisma /app/node_modules/.prisma \
     ln -sf /app/packages/database/node_modules/@prisma/client /app/apps/api/node_modules/@prisma/client && \
     ln -sf /app/packages/database/node_modules/.prisma/client /app/apps/api/node_modules/.prisma/client
 
+# Copy entrypoint script
+COPY docker/entrypoint-api.sh /app/entrypoint-api.sh
+RUN chmod +x /app/entrypoint-api.sh
+
 # Session storage
 RUN mkdir -p /data/sessions
 
@@ -120,7 +126,7 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 EXPOSE 3333
 
 WORKDIR /app/apps/api
-CMD ["node", "dist/main.js"]
+ENTRYPOINT ["/app/entrypoint-api.sh"]
 
 
 # ── Stage 3: Admin Dashboard Runtime ─────────
@@ -131,6 +137,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV HOSTNAME="0.0.0.0"
 ENV PORT=3001
+
+# Install sharp for Next.js image optimization in standalone mode
+RUN npm install sharp
 
 COPY --from=builder /app/apps/admin/.next/standalone ./
 COPY --from=builder /app/apps/admin/.next/static ./apps/admin/.next/static

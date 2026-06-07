@@ -25,6 +25,8 @@ COPY . .
 # Build Admin UI
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ARG INTERNAL_API_URL
+ENV INTERNAL_API_URL=$INTERNAL_API_URL
 
 RUN pnpm --filter @multiwa/admin build || true
 RUN test -d apps/admin/.next/standalone && echo "Admin build verified" || (echo "FATAL: Admin standalone build missing" && exit 1)
@@ -38,6 +40,9 @@ ENV NODE_ENV=production
 # Next.js standalone mode requires HOSTNAME for proper Docker networking
 ENV HOSTNAME="0.0.0.0"
 ENV PORT=3001
+
+# Install sharp for Next.js image optimization in standalone mode
+RUN npm install sharp
 
 # Copy Next.js build output
 COPY --from=builder /app/apps/admin/.next/standalone ./

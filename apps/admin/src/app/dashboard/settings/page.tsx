@@ -890,7 +890,7 @@ export default function SettingsPage() {
                   Explore our API endpoints and integrate with your applications.
                 </p>
                 <Button variant="outline" size="sm" asChild>
-                  <a href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3333'}/api/docs`} target="_blank">View API Docs</a>
+                  <a href={`${process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:3333'}/api/docs`} target="_blank">View API Docs</a>
                 </Button>
               </div>
             </div>

@@ -42,7 +42,7 @@ jobs:
       - name: Build Admin
         run: pnpm --filter admin build
         env:
-          NEXT_PUBLIC_API_URL: http://localhost:3000
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:3000
 
   docker-build:
     name: Docker Build Test
@@ -61,7 +61,7 @@ jobs:
       - name: Build Admin Image
         run: |
           docker build -f docker/Dockerfile.admin \
-            --build-arg NEXT_PUBLIC_API_URL=http://localhost:3000 \
+            --build-arg NEXT_PUBLIC_API_URL=http://127.0.0.1:3000 \
             -t multiwa-admin:test .
 
   test:

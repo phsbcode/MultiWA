@@ -114,6 +114,10 @@ RUN mkdir -p /app/node_modules/@prisma /app/node_modules/.prisma \
   ln -sf /app/packages/database/node_modules/@prisma/client /app/apps/api/node_modules/@prisma/client && \
   ln -sf /app/packages/database/node_modules/.prisma/client /app/apps/api/node_modules/.prisma/client
 
+# Copy entrypoint script
+COPY docker/entrypoint-api.sh /app/entrypoint-api.sh
+RUN chmod +x /app/entrypoint-api.sh
+
 # Create sessions directory for whatsapp-web.js auth
 RUN mkdir -p /data/sessions
 
@@ -127,4 +131,4 @@ EXPOSE 3333
 
 WORKDIR /app/apps/api
 
-CMD ["node", "dist/main.js"]
+ENTRYPOINT ["/app/entrypoint-api.sh"]

@@ -1,0 +1,26 @@
+diff --git a/docker-compose.yml b/docker-compose.yml
+index b0a6db3..163cbd2 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -90,7 +90,11 @@ services:
+       redis:
+         condition: service_healthy
+     healthcheck:
+-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3333/api/docs"]
++      test: 
++        [
++      	  "CMD-SHELL",
++          "node -e \"require('http').get('http://127.0.0.1:3333', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))\""
++        ]
+       interval: 30s
+       timeout: 10s
+       retries: 3
+@@ -117,7 +121,7 @@ services:
+       api:
+         condition: service_started
+     healthcheck:
+-      test: ["CMD-SHELL", "wget -q --spider http://localhost:3001 || exit 1"]
++      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3001 || exit 1"]
+       interval: 30s
+       timeout: 10s
+       retries: 3
