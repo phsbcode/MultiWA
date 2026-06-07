@@ -166,42 +166,38 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   }
 
   /**
-   * Clean up stale Chromium lock files and zombie processes that persist
-   * after a container restart or unclean disconnect.
+   * Clean up stale Chromium lock files that persist after a container
+   * restart or unclean disconnect.
    *
    * Without this, Puppeteer refuses to launch:
    *   "The profile appears to be in use by another Chromium process"
-   * or the browser launch hangs forever because of stale LOCK files
-   * in LevelDB subdirectories.
    *
-   * The most reliable strategy is to nuke the entire `.wwebjs_auth` directory
-   * (the Chrome user-data profile).  whatsapp-web-js / puppeteer recreate it
-   * fresh on the next launch, and since `disconnectProfile()` already clears
-   * `sessionData: null` in the DB, the old session is invalid anyway.
+   * We use `find -delete` (reliable for deeply nested dirs) to remove
+   * only the lock files, preserving the existing Chrome user-data
+   * profile so that the page/frame state is stable and send operations
+   * don't hit "detached Frame" errors.
    */
   private async cleanupStaleLockFiles(sessionDir: string): Promise<void> {
-    const fs = await import('fs/promises');
     const { execSync } = await import('child_process');
 
-    // 1. Kill any lingering Chromium / Chrome processes
+    const wwebjsAuthDir = path.join(sessionDir, '.wwebjs_auth');
+
+    // Only act if the directory exists
     try {
-      execSync('pkill -9 -f chromium 2>/dev/null || pkill -9 -f chrome 2>/dev/null || true');
-      execSync('pkill -9 -f chrome_crashpad 2>/dev/null || true');
+      const fs = await import('fs/promises');
+      await fs.access(wwebjsAuthDir);
     } catch {
-      // non-zero exit when no processes match — harmless
+      return;
     }
 
-    // 2. Nuke the entire .wwebjs_auth directory — this is where Chromium
-    //    stores its profile (Singleton* files, LevelDB LOCK files, etc.).
-    //    Deleting it guarantees NO stale lock files can block a new launch.
-    const wwebjsAuthDir = path.join(sessionDir, '.wwebjs_auth');
-    try {
-      await fs.access(wwebjsAuthDir);
-      await fs.rm(wwebjsAuthDir, { recursive: true, force: true });
-      this.logger.log(`Removed stale .wwebjs_auth directory for clean Chromium launch`);
-    } catch {
-      // Directory doesn't exist — nothing to clean
-    }
+    // Use find to delete lock files reliably in all nested directories.
+    // This is more robust than the earlier recursive readdir approach
+    // because find handles deeply nested paths correctly.
+    execSync(
+      `find "${wwebjsAuthDir}" \\( -name 'SingletonLock' -o -name 'SingletonSocket' -o -name 'SingletonCookie' -o -name 'LOCK' \\) -delete 2>/dev/null || true`,
+    );
+
+    this.logger.debug(`Cleaned stale lock files under ${wwebjsAuthDir}`);
   }
 
   async onModuleDestroy() {
