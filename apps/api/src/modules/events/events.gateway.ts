@@ -16,11 +16,7 @@ import { Logger } from '@nestjs/common';
 @WebSocketGateway({
   namespace: '/ws',
   cors: {
-    origin: [
-      'http://localhost:3001',
-      'http://localhost:3001',
-      'http://localhost:3000',
-    ],
+    origin: (process.env.CORS_ORIGINS || 'http://localhost:3001,http://localhost:3000').split(',').map(o => o.trim()),
     credentials: true,
   },
   transports: ['websocket', 'polling'],
@@ -33,6 +29,13 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   // Track connected clients by profile ID
   private clients: Map<string, Set<string>> = new Map();
+
+  // Cache the latest QR code per profile so newly-joining clients
+  // don't miss it if the engine emitted the QR before the client joined.
+  private latestQr: Map<string, string> = new Map();
+
+  // Cache the latest connection status per profile for the same reason.
+  private latestStatus: Map<string, { status: string; phoneNumber?: string }> = new Map();
 
   handleConnection(client: Socket) {
     this.logger.log(`Client connected to /ws namespace: ${client.id}`);
@@ -64,6 +67,20 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.clients.set(profileId, new Set());
     }
     this.clients.get(profileId)!.add(client.id);
+
+    // Catch-up: if there's a recent QR code the client may have missed,
+    // re-emit it directly to this client (not to the whole room).
+    const pendingQr = this.latestQr.get(profileId);
+    if (pendingQr) {
+      this.logger.log(`Re-emitting pending QR for profile ${profileId} to newly-joined client ${client.id}`);
+      client.emit('qr:update', { profileId, qrCode: pendingQr });
+    }
+
+    // Catch-up: re-emit latest connection status if any
+    const pendingStatus = this.latestStatus.get(profileId);
+    if (pendingStatus) {
+      client.emit('connection:status', { profileId, ...pendingStatus });
+    }
     
     return { success: true, profileId };
   }
@@ -100,12 +117,21 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   // Emit QR code update (matches frontend: socket.on('qr:update', data))
   emitQrUpdate(profileId: string, qrCode: string) {
     this.logger.log(`Emitting qr:update for profile: ${profileId}`);
+    // Cache so late-joining clients can catch up
+    this.latestQr.set(profileId, qrCode);
     this.server.to(`profile:${profileId}`).emit('qr:update', { profileId, qrCode });
   }
 
   // Emit connection status (matches frontend: socket.on('connection:status', data))
   emitConnectionStatus(profileId: string, status: string, phoneNumber?: string) {
     this.logger.log(`Emitting connection:status '${status}' for profile: ${profileId}`);
+    // Cache so late-joining clients can catch up
+    this.latestStatus.set(profileId, { status, phoneNumber });
+    // QR is no longer valid once connected or disconnected — clear it
+    // so the catch-up mechanism doesn't send a stale QR to late joiners.
+    if (status === 'connected' || status === 'disconnected') {
+      this.latestQr.delete(profileId);
+    }
     this.server.to(`profile:${profileId}`).emit('connection:status', { 
       profileId, 
       status,

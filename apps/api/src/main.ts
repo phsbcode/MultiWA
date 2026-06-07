@@ -6,6 +6,8 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { IoAdapter } from '@nestjs/platform-socket.io';
+import { existsSync, mkdirSync } from 'fs';
+import { resolve } from 'path';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -25,6 +27,19 @@ async function bootstrap() {
       },
     });
     console.log('✅ [2/7] @fastify/multipart registered');
+
+    // Static file serving for uploaded media (local storage)
+    console.log('🔧 [2.25/7] Registering @fastify/static for media files...');
+    const mediaPath = resolve(process.env.STORAGE_PATH || './media');
+    if (!existsSync(mediaPath)) {
+      mkdirSync(mediaPath, { recursive: true });
+    }
+    await app.register(require('@fastify/static'), {
+      root: mediaPath,
+      prefix: '/uploads/media/',
+      decorateReply: false,
+    });
+    console.log('✅ [2.25/7] @fastify/static registered, serving:', mediaPath);
 
     // Security headers via Helmet
     console.log('🔧 [2.5/7] Registering @fastify/helmet...');

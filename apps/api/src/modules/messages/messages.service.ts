@@ -229,7 +229,8 @@ export class MessagesService {
       if (engineContent.url && typeof engineContent.url === 'string') {
         engineContent.url = engineContent.url
           .replace('://localhost:9000', '://minio:9000')
-          .replace('://127.0.0.1:9000', '://minio:9000');
+          .replace('://127.0.0.1:9000', '://minio:9000')
+          .replace('://0.0.0.0:3333', '://127.0.0.1:3333');
       }
       switch (type) {
         case 'text':

@@ -44,11 +44,21 @@ const formatPhone = (phone: string) => {
   return cleaned;
 };
 
-// Fix media URLs that use Docker-internal hostname
+// Fix media URLs that use Docker-internal hostnames
+// Replaces internal addresses with the browser's current hostname
+// so images load correctly from any machine on the network.
 const fixMediaUrl = (url?: string): string => {
   if (!url) return '';
-  // Replace Docker-internal minio hostname with localhost
-  return url.replace(/http:\/\/minio:9000/g, 'http://localhost:9000');
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    return url
+      .replace(/http:\/\/minio:9000/g, `http://${hostname}:9000`)
+      .replace(/http:\/\/0\.0\.0\.0:3333/g, `http://${hostname}:3333`)
+      .replace(/http:\/\/127\.0\.0\.1:3333/g, `http://${hostname}:3333`);
+  }
+  return url
+    .replace(/http:\/\/minio:9000/g, 'http://localhost:9000')
+    .replace(/http:\/\/0\.0\.0\.0:3333/g, 'http://127.0.0.1:3333');
 };
 
 // Check if a name looks like a raw JID (e.g. "120363421805328930@g.us" or "6282283011108@s.whatsapp.net" or all digits)

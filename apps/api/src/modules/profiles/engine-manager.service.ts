@@ -171,36 +171,41 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   }
 
   /**
-   * Clean up stale Chromium lock files that persist after container restart.
-   * These files prevent Puppeteer from launching a new browser.
+   * Clean up stale Chromium lock files and zombie processes that persist
+   * after a container restart or unclean disconnect.
+   *
+   * Without this, Puppeteer refuses to launch:
+   *   "The profile appears to be in use by another Chromium process"
+   * or the browser launch hangs forever because of stale LOCK files
+   * in LevelDB subdirectories.
+   *
+   * The most reliable strategy is to nuke the entire `.wwebjs_auth` directory
+   * (the Chrome user-data profile).  whatsapp-web-js / puppeteer recreate it
+   * fresh on the next launch, and since `disconnectProfile()` already clears
+   * `sessionData: null` in the DB, the old session is invalid anyway.
    */
   private async cleanupStaleLockFiles(sessionDir: string): Promise<void> {
     const fs = await import('fs/promises');
-    const lockFiles = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
-    
-    // Recursively find and remove lock files in the session directory
+    const { execSync } = await import('child_process');
+
+    // 1. Kill any lingering Chromium / Chrome processes
     try {
-      await fs.access(sessionDir);
+      execSync('pkill -9 -f chromium 2>/dev/null || pkill -9 -f chrome 2>/dev/null || true');
+      execSync('pkill -9 -f chrome_crashpad 2>/dev/null || true');
     } catch {
-      return; // Session dir doesn't exist yet, nothing to clean
+      // non-zero exit when no processes match — harmless
     }
-    
-    // Walk through known Chromium profile subdirectories
+
+    // 2. Nuke the entire .wwebjs_auth directory — this is where Chromium
+    //    stores its profile (Singleton* files, LevelDB LOCK files, etc.).
+    //    Deleting it guarantees NO stale lock files can block a new launch.
+    const wwebjsAuthDir = path.join(sessionDir, '.wwebjs_auth');
     try {
-      const entries = await fs.readdir(sessionDir, { recursive: true, withFileTypes: true });
-      for (const entry of entries) {
-        if (lockFiles.includes(entry.name)) {
-          const lockPath = path.join(entry.parentPath || entry.path, entry.name);
-          try {
-            await fs.unlink(lockPath);
-            this.logger.log(`Removed stale Chromium lock file: ${lockPath}`);
-          } catch (e) {
-            this.logger.warn(`Could not remove lock file ${lockPath}: ${(e as Error).message}`);
-          }
-        }
-      }
-    } catch (e) {
-      this.logger.warn(`Error scanning for lock files: ${(e as Error).message}`);
+      await fs.access(wwebjsAuthDir);
+      await fs.rm(wwebjsAuthDir, { recursive: true, force: true });
+      this.logger.log(`Removed stale .wwebjs_auth directory for clean Chromium launch`);
+    } catch {
+      // Directory doesn't exist — nothing to clean
     }
   }
 
@@ -721,29 +726,44 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       });
 
       // Start connection (async, QR will come via callback)
-      engine.connect().catch(async (error) => {
-        this.logger.error(`Engine connect error for ${profileId}:`, error);
-        
-        // Clean up the failed engine instance
-        try {
-          await engine.destroy?.();
-        } catch (e) {
-          this.logger.warn(`Error destroying failed engine: ${(e as Error).message}`);
-        }
-        this.engines.delete(profileId);
-        
-        // Reset DB status to disconnected so user can retry
-        try {
-          await prisma.profile.update({
-            where: { id: profileId },
-            data: { status: 'disconnected' },
-          });
-        } catch (dbErr) {
-          this.logger.error(`Failed to reset profile status:`, dbErr);
-        }
-        
-        this.eventsGateway.emitConnectionStatus(profileId, 'error');
-      });
+      // Wrap in a timeout so the frontend spinner doesn't hang indefinitely
+      const connectTimeout = 60000; // 60 seconds max for connection
+      const connectPromise = engine.connect();
+      const timeoutPromise = new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error('Engine connect timed out after 60s')), connectTimeout)
+      );
+
+      Promise.race([connectPromise, timeoutPromise])
+        .catch(async (error) => {
+          this.logger.error(`Engine connect error for ${profileId}:`, error);
+
+          // Clean up the failed engine instance
+          try {
+            await engine.destroy?.();
+          } catch (e) {
+            this.logger.warn(`Error destroying failed engine: ${(e as Error).message}`);
+          }
+          this.engines.delete(profileId);
+
+          // pkill any remaining Chromium processes that may be stuck
+          try {
+            const { execSync } = await import('child_process');
+            execSync('pkill -f chromium 2>/dev/null || true');
+            execSync('pkill -f chrome_crashpad 2>/dev/null || true');
+          } catch {}
+
+          // Reset DB status to disconnected so user can retry
+          try {
+            await prisma.profile.update({
+              where: { id: profileId },
+              data: { status: 'disconnected' },
+            });
+          } catch (dbErr) {
+            this.logger.error(`Failed to reset profile status:`, dbErr);
+          }
+
+          this.eventsGateway.emitConnectionStatus(profileId, 'error');
+        });
 
       return { status: 'connecting', message: 'Scan QR code to connect' };
     } catch (error: any) {
