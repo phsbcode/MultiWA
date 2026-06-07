@@ -91,24 +91,19 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       
       for (const profile of profiles) {
         const sessionDir = path.join(sessionsDir, profile.id);
-        // whatsapp-web.js LocalAuth stores data in {dataPath}/.wwebjs_auth/session-{clientId}/
-        const wwebjsSessionDir = path.join(sessionDir, '.wwebjs_auth', `session-${profile.id}`);
-        // Also check for Baileys-style creds.json as fallback
-        const credsPath = path.join(sessionDir, 'creds.json');
         
+        // Check if the session directory exists at all.
+        // We no longer check .wwebjs_auth/session-{profileId}/ specifically, because
+        // cleanupStaleLockFiles() deletes the entire .wwebjs_auth dir.  The MultiDevice
+        // auth state is re-established transparently by whatsapp-web-js when the engine
+        // connects, so a simple directory existence check is sufficient.
         let hasSession = false;
         try {
-          await fs.access(wwebjsSessionDir);
+          await fs.access(sessionDir);
           hasSession = true;
-          this.logger.log(`Found whatsapp-web.js session for: ${profile.displayName || profile.id}`);
+          this.logger.log(`Found session directory for: ${profile.displayName || profile.id}, will attempt reconnect`);
         } catch {
-          try {
-            await fs.access(credsPath);
-            hasSession = true;
-            this.logger.log(`Found Baileys session for: ${profile.displayName || profile.id}`);
-          } catch {
-            // No session found
-          }
+          // No session directory at all — profile was never connected
         }
 
         if (!hasSession) {
