@@ -12,14 +12,12 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
   <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.0.0-green.svg" alt="Version" /></a>
-  <a href="https://ribato22.github.io/MultiWA/"><img src="https://img.shields.io/badge/🌐_Website-Live-brightgreen.svg" alt="Website" /></a>
+  <a href="https://phsbcode.github.io/MultiWA/"><img src="https://img.shields.io/badge/🌐_Website-Live-brightgreen.svg" alt="Website" /></a>
   <a href="docker-compose.yml"><img src="https://img.shields.io/badge/docker-one--click-2496ED.svg" alt="Docker" /></a>
-  <a href="https://hub.docker.com/r/ribato/multiwa-api"><img src="https://img.shields.io/docker/pulls/ribato/multiwa-api.svg" alt="Docker Pulls" /></a>
-  <a href="https://github.com/ribato22/MultiWA/actions/workflows/ci.yml"><img src="https://github.com/ribato22/MultiWA/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://github.com/ribato22/MultiWA/actions/workflows/release-gate.yml"><img src="https://github.com/ribato22/MultiWA/actions/workflows/release-gate.yml/badge.svg" alt="Release Gate" /></a>
+  <a href="https://github.com/phsbcode/MultiWA/actions/workflows/ci.yml"><img src="https://github.com/phsbcode/MultiWA/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/phsbcode/MultiWA/actions/workflows/release-gate.yml"><img src="https://github.com/phsbcode/MultiWA/actions/workflows/release-gate.yml/badge.svg" alt="Release Gate" /></a>
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome" />
-  <a href="https://buymeacoffee.com/ribato"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-☕-orange.svg" alt="Buy Me a Coffee" /></a>
-  <a href="https://github.com/sponsors/ribato22"><img src="https://img.shields.io/badge/Sponsor-❤️-ea4aaa.svg" alt="GitHub Sponsors" /></a>
+  <a href="https://github.com/sponsors/phsbcode"><img src="https://img.shields.io/badge/Sponsor-❤️-ea4aaa.svg" alt="GitHub Sponsors" /></a>
 </p>
 
 <p align="center">
@@ -60,51 +58,78 @@ If you want to send and receive WhatsApp messages from your own backend without 
   ⭐ <strong>If you find MultiWA useful, please consider giving it a star!</strong><br />
   It helps us grow and motivates continued development.
   <br /><br />
-  <a href="https://github.com/ribato22/MultiWA"><img src="https://img.shields.io/github/stars/ribato22/MultiWA?style=social" alt="GitHub Stars" /></a>
+  <a href="https://github.com/phsbcode/MultiWA"><img src="https://img.shields.io/github/stars/phsbcode/MultiWA?style=social" alt="GitHub Stars" /></a>
 </p>
 
 ---
 
 ## 🚀 Quick Start
 
-### Option 1: Docker — One Command Setup ⚡
+### Prerequisites
+
+- **Docker** ≥ 24 + Docker Compose v2
+- **Git**
+- **4 GB+ RAM** recommended (Chrome/Puppeteer for whatsapp-web.js)
+
+### Clone & Deploy
 
 ```bash
-git clone https://github.com/ribato22/MultiWA.git
+git clone https://github.com/phsbcode/MultiWA.git
 cd MultiWA
 cp .env.docker .env
-docker compose up -d
+docker compose up -d --build
 ```
 
-That's it! Access:
-- 🖥️ **Admin Dashboard**: http://localhost:3001
-- 📖 **API Swagger Docs**: http://localhost:3333/api/docs
-- 🔌 **API Endpoint**: http://localhost:3333/api/v1
-
-> **Full stack** (with S3 storage + Nginx proxy): `docker compose --profile full up -d`
-
-### Option 2: Local Development
-
-**Prerequisites:** Node.js ≥ 20 · PostgreSQL ≥ 16 · Redis ≥ 7 · pnpm ≥ 9
+Wait for all services to become healthy:
 
 ```bash
-git clone https://github.com/ribato22/MultiWA.git
-cd MultiWA
-pnpm install
+docker compose ps
+# All 4 services should show "(healthy)"
+```
 
-cp .env.example .env
+Access:
+| Service | URL |
+|---------|-----|
+| 🖥️ **Admin Dashboard** | http://localhost:3001 |
+| 📖 **API Swagger Docs** | http://localhost:3333/api/docs |
+| 🔌 **API Endpoint** | http://localhost:3333/api/v1 |
 
-# Setup database
-pnpm --filter database exec prisma generate
-pnpm --filter database exec prisma migrate deploy
+### First-Time Setup
 
-# Build workspace packages
-pnpm --filter database build
-pnpm --filter engines build
+1. Open the Admin Dashboard at http://localhost:3001
+2. Register an admin account
+3. Go to **Profiles** → **Add Profile** → choose engine (whatsapp-web.js or Baileys)
+4. Click **Connect** → scan the QR code with WhatsApp
+5. The profile status changes to **Connected**
 
-# Start development
-pnpm --filter api dev     # API on http://localhost:3000
-pnpm --filter admin dev   # Admin on http://localhost:3001
+Profiles auto-reconnect after server restart — no need to re-scan QR.
+
+### Verify It Works
+
+Send a test message via the API:
+
+```bash
+curl -X POST http://localhost:3333/api/v1/messages/text \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "profileId": "your-profile-uuid",
+    "to": "6281234567890",
+    "text": "Hello from MultiWA!"
+  }'
+```
+
+### Additional Commands
+
+```bash
+# Install auto-code-review hooks (runs review on every commit)
+pnpm run hooks:install
+
+# Manually review working tree changes
+pnpm run review
+
+# Rebuild and restart a specific service after code changes
+docker compose up -d --build api
 ```
 
 ---
@@ -223,7 +248,7 @@ curl -X POST http://localhost:3333/api/v1/accounts/YOUR_ACCOUNT_ID/profiles/YOUR
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
-> 📚 See [full documentation](https://ribato22.github.io/MultiWA/) for detailed guides, API reference, webhook events, and more. Source docs are in the [`docs/`](docs/) directory.
+> 📚 See [full documentation](https://phsbcode.github.io/MultiWA/) for detailed guides, API reference, webhook events, and more. Source docs are in the [`docs/`](docs/) directory.
 
 ---
 
@@ -292,7 +317,7 @@ Detailed deployment guide: [`docs/16-deployment-docker.md`](docs/16-deployment-d
 
 ```bash
 # 1. Clone and configure
-git clone https://github.com/ribato22/MultiWA.git
+git clone https://github.com/phsbcode/MultiWA.git
 cd MultiWA
 cp .env.production.example .env
 # Edit .env with your settings (JWT_SECRET, DB_PASSWORD, etc.)
@@ -378,9 +403,9 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 
 ## 🔗 Links
 
-- 📖 [Documentation](https://ribato22.github.io/MultiWA/) · [Source](docs/)
-- 🐛 [Report a Bug](https://github.com/ribato22/MultiWA/issues/new?template=bug_report.yml)
-- 💡 [Request a Feature](https://github.com/ribato22/MultiWA/issues/new?template=feature_request.yml)
+- 📖 [Documentation](https://phsbcode.github.io/MultiWA/) · [Source](docs/)
+- 🐛 [Report a Bug](https://github.com/phsbcode/MultiWA/issues/new?template=bug_report.yml)
+- 💡 [Request a Feature](https://github.com/phsbcode/MultiWA/issues/new?template=feature_request.yml)
 - 🔒 [Security Policy](SECURITY.md)
 - 📝 [Changelog](CHANGELOG.md)
 - 🕵️ [Privacy Policy](PRIVACY.md)
@@ -388,5 +413,5 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 ---
 
 <p align="center">
-  Made with ❤️ by the <a href="https://github.com/ribato22">MultiWA</a> team
+  Made with ❤️ by the <a href="https://github.com/phsbcode">MultiWA</a> team
 </p>
