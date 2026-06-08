@@ -717,18 +717,18 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       });
 
       // Start connection (async, QR will come via callback)
-      // Wrap in a timeout so the frontend spinner doesn't hang indefinitely
+      // Wrap in a timeout so the frontend spinner doesn't hang indefinitely.
+      // Unlike Promise.race — which orphans the engine when the timeout wins —
+      // we let connect() finish in the background so onReady/disconnected
+      // callbacks fire normally. If it times out, the caller gets a fast
+      // response but the engine stays alive for the full connect attempt.
       const connectTimeout = 60000; // 60 seconds max for connection
-      const connectPromise = engine.connect();
-      const timeoutPromise = new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('Engine connect timed out after 60s')), connectTimeout)
-      );
 
-      Promise.race([connectPromise, timeoutPromise])
-        .catch(async (error) => {
-          this.logger.error(`Engine connect error for ${profileId}:`, error);
+      const connectWithTimeout = engine.connect().then(
+        () => this.logger.log(`Engine connect completed for ${profileId}`),
+        async (error) => {
+          this.logger.error(`Engine connect failed for ${profileId}:`, error);
 
-          // Clean up the failed engine instance
           try {
             await engine.destroy?.();
           } catch (e) {
@@ -736,14 +736,12 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           }
           this.engines.delete(profileId);
 
-          // pkill any remaining Chromium processes that may be stuck
           try {
             const { execSync } = await import('child_process');
             execSync('pkill -f chromium 2>/dev/null || true');
             execSync('pkill -f chrome_crashpad 2>/dev/null || true');
           } catch {}
 
-          // Reset DB status to disconnected so user can retry
           try {
             await prisma.profile.update({
               where: { id: profileId },
@@ -754,7 +752,15 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           }
 
           this.eventsGateway.emitConnectionStatus(profileId, 'error');
-        });
+        },
+      );
+
+      const timeoutId = setTimeout(() => {
+        this.logger.warn(`Engine connect timed out after 60s for ${profileId}, but engine is still connecting in background`);
+        this.eventsGateway.emitConnectionStatus(profileId, 'connecting');
+      }, connectTimeout);
+
+      connectWithTimeout.finally(() => clearTimeout(timeoutId));
 
       return { status: 'connecting', message: 'Scan QR code to connect' };
     } catch (error: any) {

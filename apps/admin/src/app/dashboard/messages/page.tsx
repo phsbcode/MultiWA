@@ -515,7 +515,7 @@ export default function MessagesPage() {
           if (fileInputRef.current) fileInputRef.current.value = '';
         }
       } else {
-        setStatus(`❌ Failed: ${result.error?.message || result.message || 'Unknown error'}`);
+        setStatus(`❌ Failed: ${result.error?.message || result.error || result.message || 'Unknown error'}`);
       }
     } catch (error) {
       console.error('Failed to send:', error);

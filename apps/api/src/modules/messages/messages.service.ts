@@ -265,8 +265,7 @@ export class MessagesService {
           result = await engine.sendText(jid, JSON.stringify(content));
       }
 
-      // Update message with actual WhatsApp message ID and status
-      if (result?.messageId) {
+      if (result?.success) {
         await prisma.message.update({
           where: { id: message.id },
           data: {
@@ -274,16 +273,31 @@ export class MessagesService {
             status: 'sent',
           },
         });
+
+        this.logger.log(`Message sent successfully: ${result?.messageId}`);
+
+        return {
+          success: true,
+          messageId: message.id,
+          conversationId: conversation.id,
+          waMessageId: result.messageId,
+          status: 'sent',
+        };
       }
 
-      this.logger.log(`Message sent successfully: ${result?.messageId}`);
-      
+      this.logger.warn(`Engine returned failure for message: ${result?.error || 'unknown error'}`);
+
+      await prisma.message.update({
+        where: { id: message.id },
+        data: { status: 'failed' },
+      });
+
       return {
-        success: true,
+        success: false,
         messageId: message.id,
         conversationId: conversation.id,
-        waMessageId: result?.messageId,
-        status: 'sent',
+        status: 'failed',
+        error: result?.error || 'Engine returned failure',
       };
     } catch (error: any) {
       this.logger.error(`Failed to send message: ${error.message}`);

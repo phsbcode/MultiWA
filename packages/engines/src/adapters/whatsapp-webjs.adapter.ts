@@ -244,50 +244,66 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     type: string,
     options?: SendMessageOptions
   ): Promise<MessageResult> {
-    try {
-      if (!this.isReady()) {
-        return { success: false, error: 'Client not ready' };
-      }
+    const MAX_RETRIES = 3;
 
-      const chatId = this.normalizePhoneToJid(to);
-      let messageMedia: MessageMedia;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        if (!this.isReady()) {
+          return { success: false, error: 'Client not ready' };
+        }
 
-      if (media.url) {
-        messageMedia = await MessageMedia.fromUrl(media.url, { unsafeMime: true });
-      } else if (media.base64) {
-        messageMedia = new MessageMedia(
-          media.mimetype || 'application/octet-stream',
-          media.base64,
-          media.filename
-        );
-      } else {
-        return { success: false, error: 'No media provided' };
-      }
+        const chatId = this.normalizePhoneToJid(to);
+        let messageMedia: MessageMedia;
 
-      // Ensure filename is preserved (fromUrl loses original filename)
-      if (media.filename) {
-        messageMedia.filename = media.filename;
-      }
+        if (media.url) {
+          messageMedia = await MessageMedia.fromUrl(media.url, { unsafeMime: true });
+        } else if (media.base64) {
+          messageMedia = new MessageMedia(
+            media.mimetype || 'application/octet-stream',
+            media.base64,
+            media.filename
+          );
+        } else {
+          return { success: false, error: 'No media provided' };
+        }
 
-      const sendOptions: any = { caption: media.caption };
-      if (type === 'audio') {
-        sendOptions.sendAudioAsVoice = true;
-      }
-      if (type === 'document') {
-        sendOptions.sendMediaAsDocument = true;
-      }
+        // Ensure filename is preserved (fromUrl loses original filename)
+        if (media.filename) {
+          messageMedia.filename = media.filename;
+        }
 
-      const result = await this.client?.sendMessage(chatId, messageMedia, sendOptions);
-      
-      return {
-        success: true,
-        messageId: result?.id._serialized,
-        timestamp: new Date(),
-      };
-    } catch (error: any) {
-      console.error(`[WhatsApp-WebJS] Send ${type} error:`, error);
-      return { success: false, error: error.message };
+        const sendOptions: any = { caption: media.caption };
+        if (type === 'audio') {
+          sendOptions.sendAudioAsVoice = true;
+        }
+        if (type === 'document') {
+          sendOptions.sendMediaAsDocument = true;
+        }
+
+        const result = await this.client?.sendMessage(chatId, messageMedia, sendOptions);
+        
+        return {
+          success: true,
+          messageId: result?.id._serialized,
+          timestamp: new Date(),
+        };
+      } catch (error: any) {
+        const isDetachedFrame = error.message?.includes('detached Frame') || 
+                                error.message?.includes('detached frame') ||
+                                error.message?.includes('Protocol error');
+
+        if (isDetachedFrame && attempt < MAX_RETRIES) {
+          console.warn(`[WhatsApp-WebJS] Send ${type} attempt ${attempt}/${MAX_RETRIES} failed (detached frame), retrying in ${attempt * 1000}ms...`);
+          await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+          continue;
+        }
+
+        console.error(`[WhatsApp-WebJS] Send ${type} error after ${attempt} attempt(s):`, error);
+        return { success: false, error: error.message };
+      }
     }
+
+    return { success: false, error: 'Max retries exceeded' };
   }
 
   async sendLocation(to: string, location: LocationOptions, options?: SendMessageOptions): Promise<MessageResult> {
