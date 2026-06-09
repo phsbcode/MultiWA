@@ -1,0 +1,26 @@
+# MultiWA Caddy reverse proxy
+# Replace SERVER_HOSTNAME with your actual domain or leave as :443 for self-signed
+# If using Twingate, set the resource to HTTPS:443 -> caddy:443
+
+{SERVER_HOSTNAME:-:443} {
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    # Admin dashboard
+    handle_path /api/* {
+        reverse_proxy api:3333
+    }
+
+    handle_path /socket.io/* {
+        reverse_proxy api:3333
+    }
+
+    handle {
+        reverse_proxy admin:3001
+    }
+}
