@@ -3,6 +3,7 @@
 # If using Twingate, set the resource to HTTPS:443 -> caddy:443
 
 {SERVER_HOSTNAME:-:3001} {
+    tls internal
     # Security headers
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
