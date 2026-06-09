@@ -118,8 +118,6 @@ services:
       NODE_ENV: production
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://127.0.0.1:3333}
       INTERNAL_API_URL: ${INTERNAL_API_URL:-http://api:3333}
-    ports:
-      - "${ADMIN_PORT:-3001}:3001"
     depends_on:
       api:
         condition: service_started
@@ -175,14 +173,14 @@ services:
       - multiwa
 
   # ─── Caddy Reverse Proxy (TLS termination) ──
+  # Serves admin on :3001 and proxies /api/* to the API backend.
+  # Terminates TLS so Twingate HTTPS resources work without ERR_SSL_PROTOCOL_ERROR.
   caddy:
     image: caddy:alpine
     container_name: multiwa-caddy
     restart: unless-stopped
-    profiles: ["tls"]
     ports:
-      - "443:443"
-      - "80:80"
+      - "${CADDY_PORT:-3001}:3001"
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
