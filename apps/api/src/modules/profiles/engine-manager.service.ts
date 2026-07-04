@@ -13,6 +13,7 @@ import * as QRCode from 'qrcode';
 import { RuleEngineService, IncomingMessage } from '../automation/rule-engine.service';
 import { NotificationsService, NotificationType } from '../notifications/notifications.service';
 import { AppEvent, HooksService } from '../hooks/hooks.service';
+import { resolveSenderIdentity } from './sender-identity';
 
 
 interface EngineInstance {
@@ -408,12 +409,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         try {
           // Determine message type and content
           const msgType = message.type || 'chat';
-          const isGroup = message.from?.includes('@g.us') || false;
-          const rawSenderJid = message.author || message.from || '';
-          // Normalize JID: whatsapp-web.js uses @c.us for individual chats,
-          // but our API uses @s.whatsapp.net — normalize to prevent duplicate conversations
-          const senderJid = isGroup ? rawSenderJid : rawSenderJid.replace('@c.us', '@s.whatsapp.net');
-          const senderName = message._data?.notifyName || message.pushName || senderJid.split('@')[0];
+          const senderIdentity = resolveSenderIdentity(message);
+          const { senderJid, senderPhone, originalSenderJid, isGroup } = senderIdentity;
+          const senderName = message._data?.notifyName || message.pushName || senderPhone || senderJid.split('@')[0];
           
           // Get or create conversation — use normalized JID
           const rawJid = message.from || '';
@@ -569,6 +567,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
               type: msgType === 'chat' ? 'text' : msgType,
               content,
               status: 'received',
+              metadata: {
+                senderPhone,
+                originalSenderJid,
+              },
               timestamp: (() => {
                 if (!message.timestamp) return new Date();
                 // whatsapp-web.js timestamp can be in seconds or milliseconds
@@ -607,6 +609,8 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             profileId,
             messageId: savedMessage.messageId,
             senderJid,
+            senderPhone,
+            originalSenderJid,
             senderName,
             type: savedMessage.type,
             content,

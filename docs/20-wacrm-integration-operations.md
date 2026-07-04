@@ -28,15 +28,21 @@ The adapter also promotes a restored authenticated session to ready when `client
 
 ## Inbound webhook sender fields
 
-For group messages, the group chat JID is not the contact phone number. Webhook consumers need the actual participant JID.
+For group messages, the group chat JID is not the contact phone number. Webhook consumers need the actual participant phone when MultiWA can resolve it.
 
-The Baileys adapter includes these fields on inbound messages when available:
+The WhatsApp-Web.js adapter attempts `message.getContact()` for every inbound message and forwards resolved contact metadata to the API:
 
-- `author`
-- `participant`
-- `pushName`
+- `contactPhone` — digits-only phone from whatsapp-web.js contact data when available
+- `contactJid` — contact JID returned by whatsapp-web.js
 
-Consumers should prefer `participant`/`author` over `senderJid`/`from` when mapping a group message to an individual contact.
+The API sender resolver then emits webhook payloads with:
+
+- `senderJid` — phone-number JID when `contactPhone` can resolve an `@lid`; otherwise the original sender JID
+- `senderPhone` — digits-only real phone when resolved
+- `originalSenderJid` — the raw sender JID, useful when WhatsApp only supplied `@lid`
+- `senderName`
+
+Consumers should prefer `senderPhone` first, then phone-number JIDs such as `@s.whatsapp.net` / `@c.us`. They must not treat `@lid` or `@g.us` values as phone numbers.
 
 ## Expected reconnect log sequence
 

@@ -146,6 +146,13 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     // Message received
     this.client.on('message', async (message: any) => {
       console.log(`[WhatsApp-WebJS] Message received: ${message.id._serialized}`);
+
+      let contact: any = null;
+      try {
+        contact = await message.getContact?.();
+      } catch (error) {
+        console.warn(`[WhatsApp-WebJS] Failed to resolve message contact: ${(error as Error).message}`);
+      }
       
       const transformedMessage = {
         id: message.id,
@@ -159,7 +166,9 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
         hasMedia: message.hasMedia,
         fromMe: message.fromMe,
         author: message.author,
-        pushName: message.id?.participant || message._data?.notifyName,
+        contactJid: contact?.id?._serialized,
+        contactPhone: contact?.number,
+        pushName: contact?.pushname || contact?.name || message.id?.participant || message._data?.notifyName,
         _data: message._data,
         downloadMedia: message.hasMedia ? () => message.downloadMedia() : undefined,
       };
