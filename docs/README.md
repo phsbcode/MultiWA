@@ -36,6 +36,7 @@ Welcome to the MultiWA documentation. MultiWA is a free, open-source WhatsApp AP
 ### Operations
 - [18 - Configuration Reference](./18-configuration-reference.md) - Environment variables
 - [19 - Database Backup](./19-database-backup.md) - Backup & restore guide
+- [20 - wacrm Integration Operations](./20-wacrm-integration-operations.md) - Reconnect behavior and webhook sender fields
 
 ---
 
