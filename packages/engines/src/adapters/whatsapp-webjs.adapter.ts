@@ -2,6 +2,8 @@
 // packages/engines/src/adapters/whatsapp-webjs.adapter.ts
 
 import { Client, LocalAuth, MessageMedia, Location, Contact, Poll } from 'whatsapp-web.js';
+import * as fs from 'fs';
+import * as path from 'path';
 import * as qrcode from 'qrcode-terminal';
 import type { 
   IWhatsAppEngine, 
@@ -27,10 +29,45 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   private currentQR: string | null = null;
   private qrCallbacks: ((qr: string) => void)[] = [];
 
+  private markReady(): void {
+    const info = this.client?.info;
+    if (!info?.wid?.user) return;
+
+    const wasConnected = this.status.isConnected;
+    if (!wasConnected) {
+      console.log(`[WhatsApp-WebJS] Client ready for profile ${this.config?.profileId}`);
+    }
+
+    this.status = {
+      isConnected: true,
+      isAuthenticated: true,
+      phone: info.wid.user,
+      pushName: info.pushname,
+      lastConnectedAt: new Date(),
+    };
+
+    this.currentQR = null;
+    if (!wasConnected) {
+      this.config?.onReady?.(info.wid.user, info.pushname || '');
+    }
+  }
+
+  private clearStaleChromiumLocks(sessionDir: string): void {
+    const profileDir = path.join(sessionDir, `session-${this.config?.profileId}`);
+    for (const file of ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'DevToolsActivePort']) {
+      try {
+        fs.rmSync(path.join(profileDir, file), { force: true });
+      } catch (error) {
+        console.warn(`[WhatsApp-WebJS] Failed to clear stale Chromium ${file}: ${(error as Error).message}`);
+      }
+    }
+  }
+
   async initialize(config: EngineConfig): Promise<void> {
     this.config = config;
     
     const sessionDir = config.sessionDir || `./sessions/${config.profileId}`;
+    this.clearStaleChromiumLocks(sessionDir);
     
     // Platform-aware Puppeteer args
     const isLinux = process.platform === 'linux';
@@ -80,26 +117,20 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     });
 
     // Ready
-    this.client.on('ready', async () => {
-      console.log(`[WhatsApp-WebJS] Client ready for profile ${this.config?.profileId}`);
-      
-      const info = this.client?.info;
-      this.status = {
-        isConnected: true,
-        isAuthenticated: true,
-        phone: info?.wid?.user,
-        pushName: info?.pushname,
-        lastConnectedAt: new Date(),
-      };
-      
-      this.currentQR = null;
-      this.config?.onReady?.(info?.wid?.user || '', info?.pushname || '');
+    this.client.on('ready', () => {
+      this.markReady();
     });
 
     // Authenticated
     this.client.on('authenticated', () => {
       console.log(`[WhatsApp-WebJS] Authenticated for profile ${this.config?.profileId}`);
       this.status.isAuthenticated = true;
+
+      // whatsapp-web.js can miss or delay `ready` after restoring a
+      // persisted Chromium session. If WhatsApp Web has loaded and
+      // populated client.info, promote the session so API/UI state does
+      // not remain stuck at "connecting".
+      setTimeout(() => this.markReady(), 15_000);
     });
 
     // Disconnected

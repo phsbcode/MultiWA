@@ -35,29 +35,26 @@ RUN cd packages/database && npx prisma generate
 # Copy all source code
 COPY . .
 
-# Build workspace packages in order
-RUN pnpm --filter @multiwa/database build || true
-RUN if [ ! -f packages/database/dist/index.js ]; then \
-      mkdir -p packages/database/dist && \
-      cp packages/database/src/*.js packages/database/dist/ 2>/dev/null || true; \
-    fi
-RUN pnpm --filter @multiwa/core build || true
-RUN pnpm --filter @multiwa/engines build || true
-RUN if [ ! -f packages/engines/dist/index.js ]; then \
-      mkdir -p packages/engines/dist && \
-      cp -r packages/engines/src/* packages/engines/dist/ 2>/dev/null || true; \
-    fi
+# Build workspace packages in dependency order. Do not ignore failures: the API
+# runtime imports these package entrypoints by their package.json "main" fields.
+RUN pnpm --filter @multiwa/database build && \
+    test -f packages/database/dist/index.js && \
+    pnpm --filter @multiwa/core build && \
+    test -f packages/core/dist/index.js && \
+    pnpm --filter @multiwa/engines build && \
+    test -f packages/engines/dist/index.js
 
 # Build API
-RUN pnpm --filter @multiwa/api build || true
-RUN test -f apps/api/dist/main.js && echo "✅ API build OK" || (echo "❌ API build failed" && exit 1)
+RUN pnpm --filter @multiwa/api build && \
+    test -f apps/api/dist/main.js && \
+    echo "✅ API build OK"
 
 # Build Admin Dashboard
 ARG NEXT_PUBLIC_API_URL=http://127.0.0.1:3333
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ARG INTERNAL_API_URL=http://api:3333
 ENV INTERNAL_API_URL=$INTERNAL_API_URL
-RUN pnpm --filter @multiwa/admin build || true
+RUN pnpm --filter @multiwa/admin build
 
 
 # ── Stage 2: API Runtime ─────────────────────

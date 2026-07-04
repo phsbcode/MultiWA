@@ -185,6 +185,9 @@ export class BaileysAdapter implements IWhatsAppEngine {
             !!message.message?.audioMessage ||
             !!message.message?.documentMessage,
           fromMe: false,
+          author: message.key.participant,
+          participant: message.key.participant,
+          pushName: message.pushName,
         };
 
         this.config?.onMessage?.(transformedMessage);
