@@ -12,6 +12,7 @@ import * as path from 'path';
 import * as QRCode from 'qrcode';
 import { RuleEngineService, IncomingMessage } from '../automation/rule-engine.service';
 import { NotificationsService, NotificationType } from '../notifications/notifications.service';
+import { AppEvent, HooksService } from '../hooks/hooks.service';
 
 
 interface EngineInstance {
@@ -30,6 +31,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     @Inject(forwardRef(() => RuleEngineService))
     private readonly ruleEngineService: RuleEngineService,
     private readonly notificationsService: NotificationsService,
+    private readonly hooksService: HooksService,
   ) {
     this.logger.log('EngineManagerService initialized');
   }
@@ -596,6 +598,21 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             type: 'message:received',
             message: savedMessage,
             conversation,
+          });
+
+          // Emit external webhook hook for CRM integrations such as wacrm.
+          // HooksService signs the exact JSON body with the registered hook
+          // secret and delivers only to subscribers of message.received.
+          this.hooksService.emit(AppEvent.MESSAGE_RECEIVED, {
+            profileId,
+            messageId: savedMessage.messageId,
+            senderJid,
+            senderName,
+            type: savedMessage.type,
+            content,
+            timestamp: savedMessage.timestamp,
+            isGroup,
+            conversationId: conversation.id,
           });
 
           // === Notification: new message ===
