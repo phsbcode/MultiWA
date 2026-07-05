@@ -61,11 +61,12 @@ export class ConversationsService {
       }
     }
 
-    // Resolve group names from WhatsApp engine (per-JID for reliability)
-    const groupConvs = conversations.filter(c => 
-      (c.type === 'group' || c.jid?.includes('@g.us')) &&
-      (!c.name || /^[0-9]+(@g\.us|@s\.whatsapp\.net)?$/.test(c.name) || c.name === c.jid)
-    );
+    // Resolve group names from WhatsApp engine (per-JID for reliability).
+    // Older rows may have been seeded with the latest participant/sender name
+    // (e.g. "AzwaHanee") instead of the actual group title, and those names
+    // look human-readable. Refresh every visible group row so group identity
+    // wins over stale sender/contact labels.
+    const groupConvs = conversations.filter(c => c.type === 'group' || c.jid?.includes('@g.us'));
     let groupJidToName: Record<string, string> = {};
 
     if (groupConvs.length > 0) {
