@@ -148,24 +148,35 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
       console.log(`[WhatsApp-WebJS] Message received: ${message.id._serialized}`);
 
       let contact: any = null;
+      let chat: any = null;
       try {
         contact = await message.getContact?.();
       } catch (error) {
         console.warn(`[WhatsApp-WebJS] Failed to resolve message contact: ${(error as Error).message}`);
       }
+      try {
+        chat = await message.getChat?.();
+      } catch (error) {
+        console.warn(`[WhatsApp-WebJS] Failed to resolve message chat: ${(error as Error).message}`);
+      }
+
+      const chatJid = chat?.id?._serialized || message.from;
+      const isGroup = Boolean(chat?.isGroup || chatJid?.includes('@g.us') || message.from?.includes('@g.us'));
       
       const transformedMessage = {
         id: message.id,
         _serialized: message.id._serialized,
-        from: message.from,
+        from: chatJid,
+        chatJid,
         to: message.to,
         body: message.body,
         type: message.type,
         timestamp: message.timestamp,
-        isGroup: message.from.includes('@g.us'),
+        isGroup,
         hasMedia: message.hasMedia,
         fromMe: message.fromMe,
         author: message.author,
+        groupName: isGroup ? chat?.name : undefined,
         contactJid: contact?.id?._serialized,
         contactPhone: contact?.number,
         pushName: contact?.pushname || contact?.name || message.id?.participant || message._data?.notifyName,

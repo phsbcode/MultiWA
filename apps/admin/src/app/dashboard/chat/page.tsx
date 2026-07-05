@@ -118,15 +118,17 @@ const isJidLikeName = (name: string) => {
 
 // Get best display name for a conversation
 const getDisplayName = (conv: any) => {
+  // Groups must use the group title, not the latest participant/contact name.
+  if (conv.type === 'group' || conv.jid?.includes('@g.us')) {
+    if (conv.name && !isJidLikeName(conv.name)) return conv.name;
+    if (conv.contactName && !isJidLikeName(conv.contactName)) return conv.contactName;
+    return 'Group Chat';
+  }
   // Prefer real human-readable names only. Numeric contact names are usually
   // raw provider/phone identities and should not be shown as chat names.
   if (conv.contactName && !isJidLikeName(conv.contactName)) return conv.contactName;
   // If name exists and doesn't look like a raw JID, use it (e.g. actual group names synced from WA)
   if (conv.name && !isJidLikeName(conv.name)) return conv.name;
-  // For groups, show "Group Chat" since we don't have the group name yet
-  if (conv.type === 'group' || conv.jid?.includes('@g.us')) {
-    return 'Group Chat';
-  }
   // Do not fall back to raw phone/JID in chat identity surfaces.
   return 'Unknown WhatsApp contact';
 };

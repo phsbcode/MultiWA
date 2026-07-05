@@ -1,6 +1,8 @@
 export interface SenderIdentityInput {
   from?: string;
   author?: string;
+  isGroup?: boolean;
+  chatJid?: string;
   contactPhone?: string;
   contactJid?: string;
 }
@@ -37,7 +39,7 @@ function phoneFromPhoneJid(jid?: string): string | undefined {
 }
 
 export function resolveSenderIdentity(message: SenderIdentityInput): SenderIdentity {
-  const isGroup = isGroupJid(message.from);
+  const isGroup = message.isGroup === true || isGroupJid(message.chatJid) || isGroupJid(message.from);
   const originalSenderJid = (isGroup ? message.author : message.from) || message.author || message.from || '';
 
   const resolvedContactPhone = isLidJid(message.contactJid) ? undefined : digitsOnly(message.contactPhone);

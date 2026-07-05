@@ -59,4 +59,20 @@ describe('resolveSenderIdentity', () => {
       isGroup: false,
     });
   });
+
+  it('keeps group identity when the adapter flags isGroup separately from from', () => {
+    expect(
+      resolveSenderIdentity({
+        from: '60123456789@s.whatsapp.net',
+        chatJid: '120363373411642286@g.us',
+        author: '60123456789@s.whatsapp.net',
+        isGroup: true,
+      }),
+    ).toEqual({
+      senderJid: '60123456789@s.whatsapp.net',
+      senderPhone: '60123456789',
+      originalSenderJid: '60123456789@s.whatsapp.net',
+      isGroup: true,
+    });
+  });
 });

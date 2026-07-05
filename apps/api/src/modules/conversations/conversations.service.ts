@@ -92,7 +92,7 @@ export class ConversationsService {
       conversations: conversations.map((c) => {
         const jidPhone = c.jid?.split('@')[0] || '';
         const isGroup = c.type === 'group' || c.jid?.includes('@g.us');
-        const resolvedName = c.contact?.name || phoneToName[jidPhone] || null;
+        const resolvedName = isGroup ? null : (c.contact?.name || phoneToName[jidPhone] || null);
         
         // For groups: try real name from engine, fall back to stored name, then 'Group Chat'
         const isJidLikeName = !c.name || /^[0-9]+(@g\.us|@s\.whatsapp\.net|@lid)?$/.test(c.name) || c.name === c.jid;
@@ -102,10 +102,11 @@ export class ConversationsService {
 
         return {
           ...c,
+          type: isGroup ? 'group' : c.type,
           messageCount: c._count.messages,
           lastMessage: c.messages[0] || null,
           contactName: displayName,
-          contactPhone: c.contact?.phone || (c.jid?.includes('@s.whatsapp.net') ? jidPhone : null),
+          contactPhone: isGroup ? null : (c.contact?.phone || (c.jid?.includes('@s.whatsapp.net') ? jidPhone : null)),
           messages: undefined,
           _count: undefined,
           contact: undefined,

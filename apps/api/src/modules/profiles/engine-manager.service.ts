@@ -412,11 +412,12 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           const senderIdentity = resolveSenderIdentity(message);
           const { senderJid, senderPhone, originalSenderJid, isGroup } = senderIdentity;
           const senderName = message._data?.notifyName || message.pushName || senderPhone || senderJid.split('@')[0];
+          const groupName = isGroup ? (message.groupName || message._data?.chatName || message._data?.name) : undefined;
           
           // Get or create conversation. Groups stay keyed by chat JID; 1:1
           // chats use a real phone-number JID when available so @lid provider
           // aliases do not appear as separate fake-number chats.
-          const rawJid = message.from || '';
+          const rawJid = (isGroup ? (message.chatJid || message.from) : message.from) || '';
           const jid = isGroup
             ? rawJid
             : (senderPhone ? `${senderPhone}@s.whatsapp.net` : rawJid.replace('@c.us', '@s.whatsapp.net'));
@@ -428,8 +429,16 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
               data: {
                 profileId,
                 jid,
-                name: senderName || jid,
+                name: (isGroup ? groupName : senderName) || jid,
                 type: isGroup ? 'group' : 'user',
+              },
+            });
+          } else if (isGroup && ((groupName && conversation.name !== groupName) || conversation.type !== 'group')) {
+            conversation = await prisma.conversation.update({
+              where: { id: conversation.id },
+              data: {
+                ...(groupName ? { name: groupName } : {}),
+                type: 'group',
               },
             });
           }
