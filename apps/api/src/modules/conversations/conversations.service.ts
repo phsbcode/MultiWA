@@ -95,7 +95,7 @@ export class ConversationsService {
         const resolvedName = c.contact?.name || phoneToName[jidPhone] || null;
         
         // For groups: try real name from engine, fall back to stored name, then 'Group Chat'
-        const isJidLikeName = !c.name || /^[0-9]+(@g\.us|@s\.whatsapp\.net)?$/.test(c.name) || c.name === c.jid;
+        const isJidLikeName = !c.name || /^[0-9]+(@g\.us|@s\.whatsapp\.net|@lid)?$/.test(c.name) || c.name === c.jid;
         const displayName = isGroup
           ? (groupJidToName[c.jid] || (isJidLikeName ? 'Group Chat' : c.name))
           : resolvedName;

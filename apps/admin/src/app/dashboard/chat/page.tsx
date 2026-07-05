@@ -37,11 +37,56 @@ interface Message {
 // Format phone number for display
 const formatPhone = (phone: string) => {
   if (!phone) return '';
+  if (phone.includes('@lid')) return '';
   const cleaned = phone.replace('@s.whatsapp.net', '').replace('@g.us', '').replace('@c.us', '');
   if (cleaned.startsWith('62')) {
     return `+${cleaned.slice(0, 2)} ${cleaned.slice(2, 5)}-${cleaned.slice(5, 9)}-${cleaned.slice(9)}`;
   }
   return cleaned;
+};
+
+const displayPhone = (conv: any) => formatPhone(conv?.contactPhone || '');
+
+const displayWhatsAppId = (jid?: string) => {
+  if (!jid) return '';
+  if (jid.includes('@lid')) return 'Provider alias hidden';
+  return jid;
+};
+
+const contactLookupPhone = (conv: any) => {
+  const phone = conv?.contactPhone || (conv?.jid?.includes('@s.whatsapp.net') ? conv.jid.split('@')[0] : '');
+  return phone && !phone.includes('@lid') ? phone : '';
+};
+
+const sanitizeChatText = (text?: string) => {
+  if (!text) return text;
+  return text.replace(/@(\d{12,})/g, (match, digits) => {
+    if (digits.startsWith('60') && digits.length <= 13) return match;
+    return '@Unknown WhatsApp contact';
+  });
+};
+
+const getLastMessagePreview = (lastMessage: any) => {
+  if (!lastMessage) return 'No messages';
+
+  const rawText = lastMessage.content?.text || lastMessage.content?.caption;
+  if (rawText) return sanitizeChatText(rawText);
+
+  switch (lastMessage.type) {
+    case 'image': return '🖼️ Image';
+    case 'video': return '🎥 Video';
+    case 'audio': return '🎵 Audio';
+    case 'document': return '📄 Document';
+    case 'location': return `📍 ${sanitizeChatText(lastMessage.content?.name) || 'Location'}`;
+    case 'vcard':
+    case 'contact':
+    case 'contacts': return '👤 Contact';
+    case 'sticker': return '🏷️ Sticker';
+    case 'poll':
+    case 'poll_creation': return '📊 Poll';
+    case 'ptt': return '🎙️ Voice message';
+    default: return '💬 Message';
+  }
 };
 
 // Fix media URLs that use Docker-internal hostnames
@@ -66,23 +111,30 @@ const isJidLikeName = (name: string) => {
   if (!name) return true;
   const trimmed = name.trim();
   // Check for full JID pattern
-  if (trimmed.includes('@s.whatsapp.net') || trimmed.includes('@g.us') || trimmed.includes('@c.us')) return true;
+  if (trimmed.includes('@s.whatsapp.net') || trimmed.includes('@g.us') || trimmed.includes('@c.us') || trimmed.includes('@lid')) return true;
   // Check for all-digit string
   return /^[0-9]+$/.test(trimmed);
 };
 
 // Get best display name for a conversation
 const getDisplayName = (conv: any) => {
-  // If contactName from backend is available, always prefer it
-  if (conv.contactName) return conv.contactName;
+  // Prefer real human-readable names only. Numeric contact names are usually
+  // raw provider/phone identities and should not be shown as chat names.
+  if (conv.contactName && !isJidLikeName(conv.contactName)) return conv.contactName;
   // If name exists and doesn't look like a raw JID, use it (e.g. actual group names synced from WA)
   if (conv.name && !isJidLikeName(conv.name)) return conv.name;
   // For groups, show "Group Chat" since we don't have the group name yet
   if (conv.type === 'group' || conv.jid?.includes('@g.us')) {
     return 'Group Chat';
   }
-  // Fallback to formatted phone number for individual chats
-  return formatPhone(conv.jid || conv.contactPhone || '') || conv.name || 'Unknown';
+  // Do not fall back to raw phone/JID in chat identity surfaces.
+  return 'Unknown WhatsApp contact';
+};
+
+const getConversationSubtitle = (conv: any) => {
+  if (!conv) return '';
+  if (conv.type === 'group' || conv.jid?.includes('@g.us')) return '';
+  return displayPhone(conv);
 };
 
 // Format timestamp
@@ -667,20 +719,7 @@ export default function ChatPage() {
                   </div>
                   <div className="flex items-center justify-between mt-1">
                     <p className="text-sm text-muted-foreground truncate flex-1">
-                      {conv.lastMessage
-                        ? conv.lastMessage.content?.text
-                          || conv.lastMessage.content?.caption
-                          || (conv.lastMessage.type === 'image' ? '🖼️ Image'
-                            : conv.lastMessage.type === 'video' ? '🎥 Video'
-                            : conv.lastMessage.type === 'audio' ? '🎵 Audio'
-                            : conv.lastMessage.type === 'document' ? '📄 Document'
-                            : conv.lastMessage.type === 'location' ? `📍 ${conv.lastMessage.content?.name || 'Location'}`
-                            : conv.lastMessage.type === 'vcard' || conv.lastMessage.type === 'contact' ? '👤 Contact'
-                            : conv.lastMessage.type === 'sticker' ? '🏷️ Sticker'
-                            : conv.lastMessage.type === 'poll' ? '📊 Poll'
-                            : conv.lastMessage.type === 'ptt' ? '🎙️ Voice message'
-                            : '💬 Message')
-                        : 'No messages'}
+                      {getLastMessagePreview(conv.lastMessage)}
                     </p>
                     {conv.unreadCount > 0 && (
                       <Badge className="bg-[#25D366] text-white text-xs ml-2">
@@ -711,9 +750,11 @@ export default function ChatPage() {
                 <h3 className="font-semibold text-foreground">
                   {getDisplayName(selectedConversation)}
                 </h3>
-                <p className="text-xs text-muted-foreground">
-                  {formatPhone(selectedConversation.jid || selectedConversation.contactId)}
-                </p>
+                {getConversationSubtitle(selectedConversation) && (
+                  <p className="text-xs text-muted-foreground">
+                    {getConversationSubtitle(selectedConversation)}
+                  </p>
+                )}
               </div>
               <div className="relative">
                 <Button variant="ghost" size="sm" onClick={() => setShowThreeDotMenu(!showThreeDotMenu)}>
@@ -802,7 +843,7 @@ export default function ChatPage() {
                     >
                       {/* Message Content */}
                       {msg.type === 'text' && (
-                        <p className="whitespace-pre-wrap break-words">{msg.content?.text}</p>
+                        <p className="whitespace-pre-wrap break-words">{sanitizeChatText(msg.content?.text)}</p>
                       )}
                       {msg.type === 'image' && (
                         <div>
@@ -815,7 +856,7 @@ export default function ChatPage() {
                                 onClick={() => window.open(fixMediaUrl(msg.content?.url), '_blank')}
                               />
                               {msg.content?.caption && (
-                                <p className="mt-2 text-sm">{msg.content.caption}</p>
+                                <p className="mt-2 text-sm">{sanitizeChatText(msg.content.caption)}</p>
                               )}
                             </>
                           ) : (
@@ -837,7 +878,7 @@ export default function ChatPage() {
                             className="rounded-lg max-w-full max-h-64"
                           />
                           {msg.content?.caption && (
-                            <p className="mt-2 text-sm">{msg.content.caption}</p>
+                            <p className="mt-2 text-sm">{sanitizeChatText(msg.content.caption)}</p>
                           )}
                         </div>
                       )}
@@ -862,7 +903,7 @@ export default function ChatPage() {
                             <div className="text-muted-foreground">⬇️</div>
                           </a>
                           {(msg.content?.caption || msg.content?.text) && (
-                            <p className="mt-2 text-sm">{msg.content.caption || msg.content.text}</p>
+                            <p className="mt-2 text-sm">{sanitizeChatText(msg.content.caption || msg.content.text)}</p>
                           )}
                         </div>
                       )}
@@ -976,7 +1017,7 @@ export default function ChatPage() {
                       {!['text', 'image', 'video', 'audio', 'document', 'location', 'vcard', 'contact', 'contacts', 'poll', 'poll_creation', 'event', 'event_creation', 'sticker', 'chat'].includes(msg.type) && (
                         <div className="bg-secondary/50 rounded-lg p-3 text-sm">
                           <p className="text-muted-foreground italic">📎 {msg.type} message</p>
-                          {msg.content?.text && <p className="mt-1">{msg.content.text}</p>}
+                          {msg.content?.text && <p className="mt-1">{sanitizeChatText(msg.content.text)}</p>}
                         </div>
                       )}
 
@@ -1225,9 +1266,11 @@ export default function ChatPage() {
             <h4 className="font-semibold text-lg text-foreground">
               {getDisplayName(selectedConversation)}
             </h4>
-            <p className="text-sm text-muted-foreground mt-1">
-              {formatPhone(selectedConversation.jid || '')}
-            </p>
+            {getConversationSubtitle(selectedConversation) && (
+              <p className="text-sm text-muted-foreground mt-1">
+                {getConversationSubtitle(selectedConversation)}
+              </p>
+            )}
             <Badge className="mt-2" variant="outline">
               {selectedConversation.type === 'group' ? '👥 Group' : '👤 Personal'}
             </Badge>
@@ -1239,7 +1282,7 @@ export default function ChatPage() {
             <div className="bg-secondary/30 rounded-xl p-3">
               <p className="text-xs text-muted-foreground mb-1">📱 Phone</p>
               <p className="text-sm font-medium text-foreground">
-                {formatPhone(selectedConversation.jid || '')}
+                {getConversationSubtitle(selectedConversation) || 'Hidden'}
               </p>
             </div>
 
@@ -1247,7 +1290,7 @@ export default function ChatPage() {
             <div className="bg-secondary/30 rounded-xl p-3">
               <p className="text-xs text-muted-foreground mb-1">🔗 WhatsApp ID</p>
               <p className="text-xs font-mono text-foreground break-all">
-                {selectedConversation.jid}
+                {displayWhatsAppId(selectedConversation.jid)}
               </p>
             </div>
 
@@ -1293,7 +1336,7 @@ export default function ChatPage() {
               <Button
                 variant="outline"
                 className="w-full justify-start gap-2 text-sm"
-                onClick={() => window.open(`/dashboard/contacts?phone=${encodeURIComponent(selectedConversation?.jid?.split('@')[0] || '')}`, '_self')}
+                onClick={() => window.open(`/dashboard/contacts?phone=${encodeURIComponent(contactLookupPhone(selectedConversation))}`, '_self')}
               >
                 👤 View in Contacts
               </Button>

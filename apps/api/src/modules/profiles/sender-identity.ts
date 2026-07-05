@@ -40,8 +40,9 @@ export function resolveSenderIdentity(message: SenderIdentityInput): SenderIdent
   const isGroup = isGroupJid(message.from);
   const originalSenderJid = (isGroup ? message.author : message.from) || message.author || message.from || '';
 
+  const resolvedContactPhone = isLidJid(message.contactJid) ? undefined : digitsOnly(message.contactPhone);
   const resolvedPhone =
-    digitsOnly(message.contactPhone) ||
+    resolvedContactPhone ||
     phoneFromPhoneJid(message.contactJid) ||
     phoneFromPhoneJid(originalSenderJid);
 

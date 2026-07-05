@@ -60,6 +60,9 @@ export default function ContactsPage() {
   });
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const phone = params.get('phone');
+    if (phone) setSearch(phone);
     loadProfiles();
   }, []);
 

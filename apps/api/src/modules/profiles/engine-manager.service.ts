@@ -413,9 +413,13 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           const { senderJid, senderPhone, originalSenderJid, isGroup } = senderIdentity;
           const senderName = message._data?.notifyName || message.pushName || senderPhone || senderJid.split('@')[0];
           
-          // Get or create conversation — use normalized JID
+          // Get or create conversation. Groups stay keyed by chat JID; 1:1
+          // chats use a real phone-number JID when available so @lid provider
+          // aliases do not appear as separate fake-number chats.
           const rawJid = message.from || '';
-          const jid = isGroup ? rawJid : rawJid.replace('@c.us', '@s.whatsapp.net');
+          const jid = isGroup
+            ? rawJid
+            : (senderPhone ? `${senderPhone}@s.whatsapp.net` : rawJid.replace('@c.us', '@s.whatsapp.net'));
           let conversation = await prisma.conversation.findFirst({
             where: { profileId, jid },
           });
@@ -627,11 +631,14 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             { profileId, conversationId: conversation.id, messageId: savedMessage.id, senderJid },
           ).catch(err => this.logger.warn(`Notification error (message): ${err.message}`));
 
-          // Check if this is a new contact
-          const phone = senderJid.split('@')[0];
-          const existingContact = await prisma.contact.findFirst({
-            where: { profileId, phone },
-          });
+          // Check if this is a new contact. Only persist real phone-number
+          // identities; never derive a contact phone from @lid provider IDs.
+          const phone = senderPhone;
+          const existingContact = phone
+            ? await prisma.contact.findFirst({
+                where: { profileId, phone },
+              })
+            : null;
           const isNewContact = !existingContact;
           
           // Auto-create contact if new

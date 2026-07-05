@@ -18,7 +18,7 @@ describe('resolveSenderIdentity', () => {
     });
   });
 
-  it('keeps a LID when no resolved phone is available', () => {
+  it('keeps a LID as provider metadata but does not synthesize a phone from it', () => {
     expect(
       resolveSenderIdentity({
         from: '120363373411642286@g.us',
@@ -29,6 +29,21 @@ describe('resolveSenderIdentity', () => {
       senderPhone: undefined,
       originalSenderJid: '27999026077946@lid',
       isGroup: true,
+    });
+  });
+
+  it('does not trust contact.number when the resolved contact JID is a LID', () => {
+    expect(
+      resolveSenderIdentity({
+        from: '2061718544578@lid',
+        contactJid: '2061718544578@lid',
+        contactPhone: '2061718544578',
+      }),
+    ).toEqual({
+      senderJid: '2061718544578@lid',
+      senderPhone: undefined,
+      originalSenderJid: '2061718544578@lid',
+      isGroup: false,
     });
   });
 
