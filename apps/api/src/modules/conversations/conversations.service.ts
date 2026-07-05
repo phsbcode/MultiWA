@@ -240,7 +240,47 @@ export class ConversationsService {
     // Reverse to chronological
     messages.reverse();
 
-    return { messages, hasMore: messages.length === (options.limit || 50) };
+    return { messages: await this.withSenderNames(messages), hasMore: messages.length === (options.limit || 50) };
+  }
+
+  private async withSenderNames(messages: any[]) {
+    if (messages.length === 0) return messages;
+
+    const profileId = messages[0]?.profileId;
+    const senderPhones = Array.from(new Set(messages
+      .map((message) => {
+        const metadata = (message.metadata as any) || {};
+        return metadata.senderPhone || this.phoneFromJid(message.senderJid);
+      })
+      .filter(Boolean)));
+
+    const contacts = profileId && senderPhones.length > 0
+      ? await prisma.contact.findMany({
+          where: { profileId, phone: { in: senderPhones } },
+          select: { phone: true, name: true },
+        })
+      : [];
+
+    const contactNameByPhone = new Map(contacts.map((contact) => [contact.phone, contact.name]));
+
+    return messages.map((message) => {
+      const metadata = (message.metadata as any) || {};
+      const senderPhone = metadata.senderPhone || this.phoneFromJid(message.senderJid);
+      const senderName = metadata.senderName || (senderPhone ? contactNameByPhone.get(senderPhone) : undefined);
+
+      return {
+        ...message,
+        senderPhone,
+        senderName: senderName || (senderPhone ? senderPhone : 'Unknown WhatsApp contact'),
+      };
+    });
+  }
+
+  private phoneFromJid(jid?: string | null) {
+    if (!jid || jid.includes('@g.us') || jid.includes('@lid')) return undefined;
+    if (!/@(?:c\.us|s\.whatsapp\.net)$/i.test(jid)) return undefined;
+    const digits = jid.replace(/\D/g, '');
+    return digits || undefined;
   }
 
   // Get or create conversation

@@ -32,6 +32,13 @@ interface Message {
   status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed' | 'received';
   timestamp: string;
   senderName?: string;
+  senderPhone?: string;
+  senderJid?: string;
+  metadata?: {
+    senderName?: string;
+    senderPhone?: string;
+    originalSenderJid?: string;
+  };
 }
 
 // Format phone number for display
@@ -137,6 +144,20 @@ const getConversationSubtitle = (conv: any) => {
   if (!conv) return '';
   if (conv.type === 'group' || conv.jid?.includes('@g.us')) return '';
   return displayPhone(conv);
+};
+
+const getMessageSenderLabel = (msg: Message) => {
+  const name = msg.senderName || msg.metadata?.senderName;
+  if (name && !isJidLikeName(name)) return name;
+
+  const phone = msg.senderPhone || msg.metadata?.senderPhone;
+  if (phone) return formatPhone(phone);
+
+  const jidPhone = msg.senderJid?.includes('@s.whatsapp.net') || msg.senderJid?.includes('@c.us')
+    ? msg.senderJid.split('@')[0]
+    : '';
+
+  return jidPhone ? formatPhone(jidPhone) : 'Unknown WhatsApp contact';
 };
 
 // Format timestamp
@@ -843,6 +864,11 @@ export default function ChatPage() {
                           : 'bg-white dark:bg-gray-800 text-foreground rounded-bl-sm shadow-sm'
                       }`}
                     >
+                      {selectedConversation.type === 'group' && msg.direction === 'incoming' && (
+                        <p className="text-xs font-semibold text-[#128C7E] dark:text-[#25D366] mb-1">
+                          {getMessageSenderLabel(msg)}
+                        </p>
+                      )}
                       {/* Message Content */}
                       {msg.type === 'text' && (
                         <p className="whitespace-pre-wrap break-words">{sanitizeChatText(msg.content?.text)}</p>

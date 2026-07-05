@@ -581,6 +581,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
               content,
               status: 'received',
               metadata: {
+                senderName,
                 senderPhone,
                 originalSenderJid,
               },
