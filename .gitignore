@@ -1,81 +1,11 @@
-# Dependencies
 node_modules/
-.pnpm-store/
-
-# Build outputs
 dist/
-.next/
-.turbo/
-*.tsbuildinfo
-
-# TypeScript compiled output in src directories
-apps/*/src/**/*.js
-apps/*/src/**/*.d.ts
-apps/*/src/**/*.d.ts.map
-apps/*/src/**/*.js.map
-packages/*/src/**/*.js
-packages/*/src/**/*.d.ts
-packages/*/src/**/*.d.ts.map
-packages/*/src/**/*.js.map
-
-# Environment
 .env
 .env.local
-.env.*.local
-.env.production
-.env.staging
-packages/database/.env
-
-# SSL Certificates
-*.pem
-*.key
-*.crt
-docker/nginx/ssl/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-logs/
 *.log
-npm-debug.log*
-pnpm-debug.log*
-
-# Testing
-coverage/
-
-# Python cache
-__pycache__/
-*.pyc
-
-# WhatsApp sessions
-sessions/
-.wwebjs_auth/
-.wwebjs_cache/
-
-# Plugins runtime data
-plugins/*/node_modules/
-
-# Temporary
-.tmp/
-tmp/
-temp/
-
-# Local-only working notes (never public)
-/findings.md
-/progress.md
-/task_plan.md
-/docs/superpowers/
-
-# Internal-only operational notes and SOPs (never public)
-/architecture/
-
-# Docusaurus
-docs-site/.docusaurus/
+.DS_Store
+.hermes-tmp/
+.next/
+.turbo/
+tsconfig.tsbuildinfo
+*.tsbuildinfo

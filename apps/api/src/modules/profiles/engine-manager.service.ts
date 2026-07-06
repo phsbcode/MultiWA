@@ -631,6 +631,11 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             timestamp: savedMessage.timestamp,
             isGroup,
             conversationId: conversation.id,
+            // Preserve chat/thread identity separately from the sender identity.
+            // For groups this is the @g.us JID; CRM consumers must key the
+            // conversation by this value, not by the latest participant.
+            chatJid: jid,
+            groupName,
           });
 
           // === Notification: new message ===

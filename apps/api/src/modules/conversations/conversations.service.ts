@@ -247,26 +247,38 @@ export class ConversationsService {
     if (messages.length === 0) return messages;
 
     const profileId = messages[0]?.profileId;
+    const lidToPhone = new Map<string, string>();
+    for (const message of messages) {
+      const metadata = (message.metadata as any) || {};
+      if (metadata.originalSenderJid?.includes('@lid') && metadata.senderPhone) {
+        lidToPhone.set(metadata.originalSenderJid, metadata.senderPhone);
+      }
+      if (message.senderJid?.includes('@lid') && metadata.senderPhone) {
+        lidToPhone.set(message.senderJid, metadata.senderPhone);
+      }
+    }
+
     const senderPhones = Array.from(new Set(messages
       .map((message) => {
         const metadata = (message.metadata as any) || {};
-        return metadata.senderPhone || this.phoneFromJid(message.senderJid);
+        return metadata.senderPhone || this.phoneFromJid(message.senderJid) || lidToPhone.get(message.senderJid);
       })
       .filter(Boolean)));
 
     const contacts = profileId && senderPhones.length > 0
       ? await prisma.contact.findMany({
           where: { profileId, phone: { in: senderPhones } },
-          select: { phone: true, name: true },
+          select: { phone: true, name: true, whatsappName: true, metadata: true },
         })
       : [];
 
-    const contactNameByPhone = new Map(contacts.map((contact) => [contact.phone, contact.name]));
+    const contactNameByPhone = new Map(contacts.map((contact) => [contact.phone, this.bestContactName(contact)]));
 
     return messages.map((message) => {
       const metadata = (message.metadata as any) || {};
-      const senderPhone = metadata.senderPhone || this.phoneFromJid(message.senderJid);
-      const senderName = metadata.senderName || (senderPhone ? contactNameByPhone.get(senderPhone) : undefined);
+      const senderPhone = metadata.senderPhone || this.phoneFromJid(message.senderJid) || lidToPhone.get(message.senderJid);
+      const metadataName = this.humanName(metadata.senderName) ? metadata.senderName : undefined;
+      const senderName = metadataName || (senderPhone ? contactNameByPhone.get(senderPhone) : undefined);
 
       return {
         ...message,
@@ -274,6 +286,21 @@ export class ConversationsService {
         senderName: senderName || (senderPhone ? senderPhone : 'Unknown WhatsApp contact'),
       };
     });
+  }
+
+  private bestContactName(contact: { name?: string | null; whatsappName?: string | null; metadata?: any }) {
+    return [
+      contact.name,
+      contact.whatsappName,
+      contact.metadata?.pushName,
+    ].find((name) => this.humanName(name));
+  }
+
+  private humanName(name?: string | null) {
+    if (!name) return false;
+    const normalized = name.trim();
+    if (!normalized) return false;
+    return !/^\+?\d+$/.test(normalized);
   }
 
   private phoneFromJid(jid?: string | null) {

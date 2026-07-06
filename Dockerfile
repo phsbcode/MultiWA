@@ -62,13 +62,32 @@ FROM node:20-slim AS api
 
 WORKDIR /app
 
-# Install Chromium for whatsapp-web.js + runtime deps
+# Install runtime deps ONLY (system chromium 150 has a segfault bug in Docker)
 RUN apt-get update && apt-get install -y \
-      chromium libnss3 libfreetype6 libharfbuzz0b \
+      libnss3 libfreetype6 libharfbuzz0b \
       ca-certificates fonts-freefont-ttf libxshmfence1 libgbm1 \
-      git --no-install-recommends && \
+      libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libxkbcommon0 \
+      libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgdk-pixbuf-2.0-0 \
+      libasound2 libx11-xcb1 libxcb-dri3-0 libdrm2 libxcb1 libglib2.0-0 \
+      libcairo2 libpango-1.0-0 libpangocairo-1.0-0 \
+      git unzip wget --no-install-recommends && \
     npm install -g pnpm && \
     rm -rf /var/lib/apt/lists/*
+
+# Download Puppeteer's bundled Chromium (reliable, tested with puppeteer)
+ENV PUPPETEER_CACHE_DIR=/root/.cache/puppeteer
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+RUN mkdir -p /root/.cache/puppeteer && \
+    CHROME_VERSION=144.0.7559.96 && \
+    wget -qO /tmp/chrome.zip "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip" && \
+    mkdir -p /root/.cache/puppeteer/chrome/linux-${CHROME_VERSION} && \
+    cd /root/.cache/puppeteer/chrome/linux-${CHROME_VERSION} && \
+    unzip -q /tmp/chrome.zip && \
+    rm /tmp/chrome.zip && \
+    chmod +x /root/.cache/puppeteer/chrome/linux-${CHROME_VERSION}/chrome-linux64/chrome && \
+    apt-get purge -y unzip wget && apt-get autoremove -y && apt-get clean
+
+ENV PUPPETEER_EXECUTABLE_PATH=/root/.cache/puppeteer/chrome/linux-144.0.7559.96/chrome-linux64/chrome
 
 # Copy workspace config
 COPY --from=builder /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
@@ -117,8 +136,6 @@ RUN mkdir -p /data/sessions
 
 ENV NODE_ENV=production
 ENV SESSIONS_PATH=/data/sessions
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 EXPOSE 3333
 

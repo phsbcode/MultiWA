@@ -144,6 +144,11 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.emitQrUpdate(profileId, qrData.qr);
   }
 
+  // Get cached QR code for a profile
+  getCachedQr(profileId: string): string | undefined {
+    return this.latestQr.get(profileId);
+  }
+
   emitStatus(profileId: string, status: string, data?: any) {
     this.emitConnectionStatus(profileId, status, data?.phoneNumber);
   }

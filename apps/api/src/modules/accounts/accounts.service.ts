@@ -209,8 +209,31 @@ export class AccountsService {
   }
 
   async getQr(accountId: string, profileId: string) {
-    // This would integrate with the WhatsApp engine to get QR code
-    // For now return a placeholder
+    // Get the cached QR code from the EventsGateway via EngineManagerService
+    const engineStatus = this.engineManager.getEngineStatus(profileId);
+    
+    // Try to get QR from the EventsGateway cache
+    const eventsGateway = (this.engineManager as any).eventsGateway;
+    if (eventsGateway && typeof eventsGateway.getCachedQr === 'function') {
+      const qrCode = eventsGateway.getCachedQr(profileId);
+      if (qrCode) {
+        return {
+          qr: qrCode,
+          status: 'connecting',
+          message: 'QR code ready',
+        };
+      }
+    }
+    
+    // If no QR in cache, check engine status
+    if (engineStatus) {
+      return {
+        qr: null,
+        status: engineStatus.isConnected ? 'connected' : engineStatus.status,
+        message: engineStatus.isConnected ? 'Already connected' : 'QR code generation in progress',
+      };
+    }
+    
     return {
       qr: null,
       status: 'pending',

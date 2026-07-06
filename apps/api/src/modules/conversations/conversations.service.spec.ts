@@ -88,6 +88,15 @@ describe('ConversationsService', () => {
         timestamp: new Date('2026-07-05T02:00:00Z'),
       },
       {
+        id: 'msg-lid-old',
+        profileId: 'profile-1',
+        conversationId: 'conv-group',
+        direction: 'incoming',
+        senderJid: '111111111111@lid',
+        metadata: {},
+        timestamp: new Date('2026-07-05T01:30:00Z'),
+      },
+      {
         id: 'msg-1',
         profileId: 'profile-1',
         conversationId: 'conv-group',
@@ -96,20 +105,32 @@ describe('ConversationsService', () => {
         metadata: { senderName: 'AzwaHanee', senderPhone: '60111111111' },
         timestamp: new Date('2026-07-05T01:00:00Z'),
       },
+      {
+        id: 'msg-lid-mapped',
+        profileId: 'profile-1',
+        conversationId: 'conv-group',
+        direction: 'incoming',
+        senderJid: '60133333333@s.whatsapp.net',
+        metadata: { senderPhone: '60133333333', originalSenderJid: '111111111111@lid' },
+        timestamp: new Date('2026-07-05T00:30:00Z'),
+      },
     ] as any);
     vi.mocked(prisma.contact.findMany).mockResolvedValueOnce([
-      { phone: '60122222222', name: 'Dayana' },
+      { phone: '60122222222', name: '60122222222', whatsappName: 'Dayana', metadata: {} },
+      { phone: '60133333333', name: '60133333333', whatsappName: '60133333333', metadata: { pushName: 'M.I.R' } },
     ] as any);
 
     const result = await service.getMessages('conv-group', {});
 
     expect(result.messages).toMatchObject([
+      { id: 'msg-lid-mapped', senderName: 'M.I.R', senderPhone: '60133333333' },
       { id: 'msg-1', senderName: 'AzwaHanee', senderPhone: '60111111111' },
+      { id: 'msg-lid-old', senderName: 'M.I.R', senderPhone: '60133333333' },
       { id: 'msg-2', senderName: 'Dayana', senderPhone: '60122222222' },
     ]);
     expect(prisma.contact.findMany).toHaveBeenCalledWith({
-      where: { profileId: 'profile-1', phone: { in: expect.arrayContaining(['60122222222', '60111111111']) } },
-      select: { phone: true, name: true },
+      where: { profileId: 'profile-1', phone: { in: expect.arrayContaining(['60122222222', '60111111111', '60133333333']) } },
+      select: { phone: true, name: true, whatsappName: true, metadata: true },
     });
   });
 });

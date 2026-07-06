@@ -58,9 +58,8 @@ FROM node:20-slim AS runner
 
 WORKDIR /app
 
-# Install Chromium and dependencies for Puppeteer/whatsapp-web.js
+# Install system dependencies for Chromium (browser needs libs like nss, freetype)
 RUN apt-get update && apt-get install -y \
-  chromium \
   libnss3 \
   libfreetype6 \
   libharfbuzz0b \
@@ -68,51 +67,32 @@ RUN apt-get update && apt-get install -y \
   fonts-freefont-ttf \
   libxshmfence1 \
   libgbm1 \
+  git \
   --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
-# Install pnpm and git (required for baileys dependency)
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/* && npm install -g pnpm
+RUN npm install -g pnpm
 
-# Copy package files for pnpm install
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
-COPY --from=builder /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
-COPY --from=builder /app/apps/api/package.json ./apps/api/package.json
-COPY --from=builder /app/packages/core/package.json ./packages/core/package.json
-COPY --from=builder /app/packages/database/package.json ./packages/database/package.json
-COPY --from=builder /app/packages/engines/package.json ./packages/engines/package.json
-COPY --from=builder /app/packages/sdk/package.json ./packages/sdk/package.json
-
-# Install production dependencies in runner
-RUN pnpm install --no-frozen-lockfile --prod
-
-# Copy built artifacts
+# Copy built artifacts first (layer caching friendly)
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
 COPY --from=builder /app/packages/database ./packages/database
 COPY --from=builder /app/packages/core ./packages/core
 COPY --from=builder /app/packages/engines ./packages/engines
 
+# Copy node_modules from builder — includes all workspace dependencies
+# with proper pnpm symlinks (--prod omits transitive deps like puppeteer)
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=builder /app/packages/database/node_modules ./packages/database/node_modules
+COPY --from=builder /app/packages/core/node_modules ./packages/core/node_modules
+COPY --from=builder /app/packages/engines/node_modules ./packages/engines/node_modules
+
 # Re-generate Prisma client for production
 RUN npm install -g prisma@6.19.2 && cd packages/database && prisma generate
 
-# Create symlinks for workspace packages (both root and app-level node_modules)
-RUN rm -rf /app/node_modules/@multiwa && mkdir -p /app/node_modules/@multiwa && \
-  ln -sf /app/packages/core /app/node_modules/@multiwa/core && \
-  ln -sf /app/packages/engines /app/node_modules/@multiwa/engines && \
-  ln -sf /app/packages/database /app/node_modules/@multiwa/database && \
-  rm -rf /app/apps/api/node_modules/@multiwa && mkdir -p /app/apps/api/node_modules/@multiwa && \
-  ln -sf /app/packages/core /app/apps/api/node_modules/@multiwa/core && \
-  ln -sf /app/packages/engines /app/apps/api/node_modules/@multiwa/engines && \
-  ln -sf /app/packages/database /app/apps/api/node_modules/@multiwa/database
-
-# Create symlinks for Prisma client (generated inside packages/database/node_modules)
-RUN mkdir -p /app/node_modules/@prisma /app/node_modules/.prisma \
-  /app/apps/api/node_modules/@prisma /app/apps/api/node_modules/.prisma && \
-  ln -sf /app/packages/database/node_modules/@prisma/client /app/node_modules/@prisma/client && \
-  ln -sf /app/packages/database/node_modules/.prisma/client /app/node_modules/.prisma/client && \
-  ln -sf /app/packages/database/node_modules/@prisma/client /app/apps/api/node_modules/@prisma/client && \
-  ln -sf /app/packages/database/node_modules/.prisma/client /app/apps/api/node_modules/.prisma/client
+# Install bundled Chromium for Puppeteer (system chromium 150 crashes in Docker)
+ENV PUPPETEER_CACHE_DIR=/root/.cache/puppeteer
+RUN npx puppeteer browsers install chrome
 
 # Copy entrypoint script
 COPY docker/entrypoint-api.sh /app/entrypoint-api.sh
@@ -123,9 +103,6 @@ RUN mkdir -p /data/sessions
 
 ENV NODE_ENV=production
 ENV SESSIONS_PATH=/data/sessions
-# Point Puppeteer to system Chromium
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 EXPOSE 3333
 
