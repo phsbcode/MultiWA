@@ -884,7 +884,7 @@ export default function ChatPage() {
                                 onClick={() => window.open(fixMediaUrl(msg.content?.url), '_blank')}
                               />
                               {msg.content?.caption && (
-                                <p className="mt-2 text-sm">{sanitizeChatText(msg.content.caption)}</p>
+                                <p className="whitespace-pre-wrap break-words mt-2 text-sm">{sanitizeChatText(msg.content.caption)}</p>
                               )}
                             </>
                           ) : (
@@ -906,7 +906,7 @@ export default function ChatPage() {
                             className="rounded-lg max-w-full max-h-64"
                           />
                           {msg.content?.caption && (
-                            <p className="mt-2 text-sm">{sanitizeChatText(msg.content.caption)}</p>
+                            <p className="whitespace-pre-wrap break-words mt-2 text-sm">{sanitizeChatText(msg.content.caption)}</p>
                           )}
                         </div>
                       )}
@@ -931,7 +931,7 @@ export default function ChatPage() {
                             <div className="text-muted-foreground">⬇️</div>
                           </a>
                           {(msg.content?.caption || msg.content?.text) && (
-                            <p className="mt-2 text-sm">{sanitizeChatText(msg.content.caption || msg.content.text)}</p>
+                            <p className="whitespace-pre-wrap break-words mt-2 text-sm">{sanitizeChatText(msg.content.caption || msg.content.text)}</p>
                           )}
                         </div>
                       )}
@@ -1045,7 +1045,7 @@ export default function ChatPage() {
                       {!['text', 'image', 'video', 'audio', 'document', 'location', 'vcard', 'contact', 'contacts', 'poll', 'poll_creation', 'event', 'event_creation', 'sticker', 'chat'].includes(msg.type) && (
                         <div className="bg-secondary/50 rounded-lg p-3 text-sm">
                           <p className="text-muted-foreground italic">📎 {msg.type} message</p>
-                          {msg.content?.text && <p className="mt-1">{sanitizeChatText(msg.content.text)}</p>}
+                          {msg.content?.text && <p className="whitespace-pre-wrap break-words mt-1">{sanitizeChatText(msg.content.text)}</p>}
                         </div>
                       )}
 
