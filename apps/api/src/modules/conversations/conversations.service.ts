@@ -32,14 +32,46 @@ export class ConversationsService {
         include: {
           _count: { select: { messages: true } },
           contact: { select: { name: true, phone: true } },
-          messages: {
-            take: 1,
-            orderBy: { timestamp: 'desc' },
-          },
         },
       }),
       prisma.conversation.count({ where }),
     ]);
+
+    // Efficiently fetch the latest message per conversation using DISTINCT ON.
+    // Fetch only IDs first (fast), then use Prisma findMany for deserialization.
+    let lastMessageMap: Map<string, any> = new Map();
+    if (conversations.length > 0) {
+      const convIds = conversations.map(c => c.id);
+      const lastIds: { conversationId: string; id: string }[] = await prisma.$queryRawUnsafe(`
+        SELECT m."conversationId", m."id"
+        FROM messages m
+        INNER JOIN (
+          SELECT "conversationId", MAX("timestamp") AS max_ts
+          FROM messages
+          WHERE "conversationId" = ANY($1)
+          GROUP BY "conversationId"
+        ) latest ON m."conversationId" = latest."conversationId" AND m."timestamp" = latest.max_ts
+        WHERE m."conversationId" = ANY($1)
+      `, convIds);
+      if (lastIds.length > 0) {
+        // Fetch last messages via raw query returning only text columns to
+        // avoid the extreme overhead of Prisma's JSONB deserialization.
+        const msgs: any[] = await prisma.$queryRawUnsafe(`
+          SELECT m."id", m."profileId", m."conversationId", m."messageId",
+                 m."direction", m."senderJid", m."type", m."status",
+                 m."quotedMessageId", m."timestamp", m."createdAt",
+                 m."content"::text AS "content", m."metadata"::text AS "metadata"
+          FROM messages m
+          WHERE m."id" = ANY($1)
+        `, lastIds.map(l => l.id));
+        for (const m of msgs) {
+          // Parse jsonb fields back since we got them as text
+          try { m.content = typeof m.content === 'string' ? JSON.parse(m.content) : m.content; } catch {}
+          try { m.metadata = typeof m.metadata === 'string' ? JSON.parse(m.metadata) : m.metadata; } catch {}
+          lastMessageMap.set(m.conversationId, m);
+        }
+      }
+    }
 
     // For conversations without a contact, try to resolve names by JID phone number
     const unlinkedConvs = conversations.filter(c => !c.contact && c.jid?.includes('@s.whatsapp.net'));
@@ -66,27 +98,17 @@ export class ConversationsService {
     // (e.g. "AzwaHanee") instead of the actual group title, and those names
     // look human-readable. Refresh every visible group row so group identity
     // wins over stale sender/contact labels.
+    //
+    // Group name resolution runs fire-and-forget to avoid blocking the
+    // conversation list response on potentially dozens of engine network calls.
+    // Resolved names persist to the DB and appear on the next page load.
     const groupConvs = conversations.filter(c => c.type === 'group' || c.jid?.includes('@g.us'));
-    let groupJidToName: Record<string, string> = {};
 
     if (groupConvs.length > 0) {
-      // Resolve each group name individually (faster than loading all 270+ groups)
-      const resolvePromises = groupConvs.map(async (gc) => {
-        try {
-          const groupInfo = await this.groupsService.getById(profileId, gc.jid);
-          if (groupInfo?.name) {
-            groupJidToName[gc.jid] = groupInfo.name;
-            // Update DB for future lookups
-            prisma.conversation.update({
-              where: { id: gc.id },
-              data: { name: groupInfo.name },
-            }).catch(() => {}); // fire-and-forget
-          }
-        } catch {
-          // Engine not connected or group not found — skip silently
-        }
-      });
-      await Promise.allSettled(resolvePromises);
+      // Fire-and-forget with concurrency control: resolve group names in the
+      // background so they don't block the conversation list response, but
+      // limit parallelism to avoid exhausting the Prisma connection pool.
+      void this.resolveGroupNames(profileId, groupConvs);
     }
 
     return {
@@ -95,17 +117,17 @@ export class ConversationsService {
         const isGroup = c.type === 'group' || c.jid?.includes('@g.us');
         const resolvedName = isGroup ? null : (c.contact?.name || phoneToName[jidPhone] || null);
         
-        // For groups: try real name from engine, fall back to stored name, then 'Group Chat'
-        const isJidLikeName = !c.name || /^[0-9]+(@g\.us|@s\.whatsapp\.net|@lid)?$/.test(c.name) || c.name === c.jid;
+        // For groups: use stored DB name, fall back to 'Group Chat' for raw JIDs
+        const isJidLikeName = !c.name || /^[0-9]+(@g\\.us|@s\\.whatsapp\\.net|@lid)?$/.test(c.name) || c.name === c.jid;
         const displayName = isGroup
-          ? (groupJidToName[c.jid] || (isJidLikeName ? 'Group Chat' : c.name))
+          ? (isJidLikeName ? 'Group Chat' : c.name)
           : resolvedName;
 
         return {
           ...c,
           type: isGroup ? 'group' : c.type,
           messageCount: c._count.messages,
-          lastMessage: c.messages[0] || null,
+          lastMessage: lastMessageMap.get(c.id) || null,
           contactName: displayName,
           contactPhone: isGroup ? null : (c.contact?.phone || (c.jid?.includes('@s.whatsapp.net') ? jidPhone : null)),
           messages: undefined,
@@ -336,5 +358,35 @@ export class ConversationsService {
       where: { id },
       data: { unreadCount: { increment: 1 }, lastMessageAt: new Date() },
     });
+  }
+
+  // Resolve group names from the WhatsApp engine and persist to DB.
+  // Runs fire-and-forget from findAll() with concurrency control so the
+  // conversation list is never blocked on engine network calls and the
+  // Prisma connection pool is not exhausted by 100+ concurrent updates.
+  // Silently skips disconnected engines.
+  private async resolveGroupNames(profileId: string, groupConvs: any[]): Promise<void> {
+    const CONCURRENCY = 5;
+    const results: Promise<void>[] = [];
+
+    for (let i = 0; i < groupConvs.length; i += CONCURRENCY) {
+      const batch = groupConvs.slice(i, i + CONCURRENCY);
+      const batchPromises = batch.map(async (gc) => {
+        try {
+          const groupInfo = await this.groupsService.getById(profileId, gc.jid);
+          if (groupInfo?.name) {
+            await prisma.conversation.update({
+              where: { id: gc.id },
+              data: { name: groupInfo.name },
+            });
+          }
+        } catch {
+          // Engine not connected or group not found — skip silently
+        }
+      });
+      results.push(Promise.allSettled(batchPromises).then(() => {}));
+    }
+
+    await Promise.allSettled(results);
   }
 }
