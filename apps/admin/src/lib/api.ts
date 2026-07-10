@@ -866,6 +866,44 @@ class ApiClient {
       body: JSON.stringify({ type }),
     });
   }
+
+  // ─── FastBots Integration ─────────────────────────────────
+  async getFastBotsConfigs() {
+    return this.request<{ success: boolean; data: Array<{
+      profileId: string;
+      displayName: string | null;
+      phoneNumber: string | null;
+      enabled: boolean;
+      hasBotKey: boolean;
+    }> }>('/integrations/fastbots');
+  }
+
+  async getFastBotsProfileConfig(profileId: string) {
+    return this.request<{ success: boolean; data: {
+      enabled: boolean;
+      hasBotKey: boolean;
+      totalChatSessions: number;
+    } }>(`/integrations/fastbots/${profileId}`);
+  }
+
+  async saveFastBotsConfig(profileId: string, config: { enabled?: boolean; botApiKey?: string }) {
+    return this.request<{ success: boolean; message: string }>(`/integrations/fastbots/${profileId}`, {
+      method: 'PUT',
+      body: JSON.stringify(config),
+    });
+  }
+
+  async testFastBotsConnection(profileId: string) {
+    return this.request<{ success: boolean; message: string }>(`/integrations/fastbots/${profileId}/test`, {
+      method: 'POST',
+    });
+  }
+
+  async resetFastBotsChats(profileId: string) {
+    return this.request<{ success: boolean; message: string }>(`/integrations/fastbots/${profileId}/reset-chats`, {
+      method: 'POST',
+    });
+  }
 }
 
 // Export singleton instance

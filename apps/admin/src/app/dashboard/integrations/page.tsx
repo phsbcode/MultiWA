@@ -9,7 +9,15 @@ import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { api } from '@/lib/api';
 
-type TabKey = 'typebot' | 'chatwoot';
+type TabKey = 'typebot' | 'chatwoot' | 'fastbots';
+
+interface ProfileFastBots {
+  profileId: string;
+  displayName: string | null;
+  phoneNumber: string | null;
+  enabled: boolean;
+  hasBotKey: boolean;
+}
 
 export default function IntegrationsPage() {
   const { toast } = useToast();
@@ -29,6 +37,16 @@ export default function IntegrationsPage() {
   const [chatwootAccountId, setChatwootAccountId] = useState('');
   const [chatwootInboxId, setChatwootInboxId] = useState('');
   const [chatwootEnabled, setChatwootEnabled] = useState(false);
+
+  // FastBots
+  const [fastbotsProfiles, setFastbotsProfiles] = useState<ProfileFastBots[]>([]);
+  const [fastbotsSelectedProfile, setFastbotsSelectedProfile] = useState<string>('');
+  const [fastbotsEnabled, setFastbotsEnabled] = useState(false);
+  const [fastbotsBotKey, setFastbotsBotKey] = useState('');
+  const [fastbotsHasKey, setFastbotsHasKey] = useState(false);
+  const [fastbotsSaving, setFastbotsSaving] = useState(false);
+  const [fastbotsTesting, setFastbotsTesting] = useState(false);
+  const [fastbotsResetting, setFastbotsResetting] = useState(false);
 
   useEffect(() => {
     loadConfig();
@@ -75,7 +93,7 @@ export default function IntegrationsPage() {
     setSaving(false);
   };
 
-  const handleTest = async (type: TabKey) => {
+  const handleTest = async (type: Exclude<TabKey, 'fastbots'>) => {
     setTesting(type);
     try {
       const res = await api.testIntegration(type);
@@ -90,9 +108,121 @@ export default function IntegrationsPage() {
     setTesting(null);
   };
 
+  // ─── FastBots handlers ──────────────────────────────────────
+
+  const loadFastbotsProfiles = async () => {
+    try {
+      const res = await api.getFastBotsConfigs();
+      if (res.data?.data) {
+        setFastbotsProfiles(res.data.data);
+      }
+    } catch {
+      // API may not be ready yet
+    }
+  };
+
+  const handleFastbotsProfileChange = async (profileId: string) => {
+    setFastbotsSelectedProfile(profileId);
+    if (!profileId) {
+      setFastbotsEnabled(false);
+      setFastbotsBotKey('');
+      setFastbotsHasKey(false);
+      return;
+    }
+    try {
+      const res = await api.getFastBotsProfileConfig(profileId);
+      if (res.data?.data) {
+        setFastbotsEnabled(res.data.data.enabled);
+        setFastbotsHasKey(res.data.data.hasBotKey);
+        setFastbotsBotKey('');
+      }
+    } catch {
+      setFastbotsEnabled(false);
+      setFastbotsHasKey(false);
+      setFastbotsBotKey('');
+    }
+  };
+
+  const handleFastbotsSave = async () => {
+    if (!fastbotsSelectedProfile) return;
+    setFastbotsSaving(true);
+    try {
+      const updates: { enabled?: boolean; botApiKey?: string } = {
+        enabled: fastbotsEnabled,
+      };
+      // Only send botApiKey if the user typed a new one
+      if (fastbotsBotKey) {
+        updates.botApiKey = fastbotsBotKey;
+      }
+      const res = await api.saveFastBotsConfig(fastbotsSelectedProfile, updates);
+      if (res.data?.success) {
+        toast({ title: '✅ FastBots Updated', description: res.data.message });
+        setFastbotsBotKey('');
+        setFastbotsHasKey(fastbotsHasKey || !!fastbotsBotKey);
+        // Refresh profiles list
+        loadFastbotsProfiles();
+      } else {
+        toast({ title: '❌ Error', description: res.data?.message || 'Failed to save', variant: 'destructive' });
+      }
+    } catch {
+      toast({ title: 'Error', description: 'Failed to save FastBots configuration', variant: 'destructive' });
+    }
+    setFastbotsSaving(false);
+  };
+
+  const handleFastbotsTest = async () => {
+    if (!fastbotsSelectedProfile) return;
+    if (!fastbotsHasKey && !fastbotsBotKey) {
+      toast({ title: '⚠️ Bot Key Required', description: 'Set a FastBots Bot API Key for this profile first.', variant: 'destructive' });
+      return;
+    }
+    setFastbotsTesting(true);
+    try {
+      // The test endpoint reads the saved profile settings. Persist a newly
+      // entered key first so testing the value in this form works as expected.
+      if (fastbotsBotKey) {
+        const saveRes = await api.saveFastBotsConfig(fastbotsSelectedProfile, {
+          enabled: fastbotsEnabled,
+          botApiKey: fastbotsBotKey,
+        });
+        if (!saveRes.data?.success) {
+          throw new Error(saveRes.data?.message || 'Failed to save Bot API Key');
+        }
+        setFastbotsHasKey(true);
+        setFastbotsBotKey('');
+      }
+      const res = await api.testFastBotsConnection(fastbotsSelectedProfile);
+      if (res.data?.success) {
+        toast({ title: '✅ FastBots Connected', description: res.data.message });
+      } else {
+        toast({ title: '❌ Connection Failed', description: res.data?.message || 'Unknown error', variant: 'destructive' });
+      }
+    } catch {
+      toast({ title: 'Error', description: 'Failed to test FastBots connection', variant: 'destructive' });
+    }
+    setFastbotsTesting(false);
+  };
+
+  const handleFastbotsReset = async () => {
+    if (!fastbotsSelectedProfile) return;
+    setFastbotsResetting(true);
+    try {
+      const res = await api.resetFastBotsChats(fastbotsSelectedProfile);
+      if (res.data?.success) {
+        toast({ title: '🗑️ Chat History Reset', description: res.data.message });
+      } else {
+        toast({ title: '❌ Error', description: res.data?.message || 'Failed to reset', variant: 'destructive' });
+      }
+    } catch {
+      toast({ title: 'Error', description: 'Failed to reset FastBots chat history', variant: 'destructive' });
+    }
+    setFastbotsResetting(false);
+  };
+
   const tabs: { key: TabKey; label: string; icon: string; description: string }[] = [
     { key: 'typebot', label: 'TypeBot', icon: '🤖', description: 'Chatbot builder for automated conversations' },
     { key: 'chatwoot', label: 'Chatwoot', icon: '💬', description: 'Customer engagement & support platform' },
+    { key: 'fastbots', label: 'FastBots AI', icon: '🧠', description: 'AI chatbot from FastBots.ai — per-profile toggle' },
   ];
 
   if (loading) {
@@ -102,6 +232,7 @@ export default function IntegrationsPage() {
           <div className="h-8 bg-secondary rounded-lg w-48" />
           <div className="h-4 bg-secondary rounded w-72" />
           <div className="flex gap-3">
+            <div className="h-12 bg-secondary rounded-xl w-40" />
             <div className="h-12 bg-secondary rounded-xl w-40" />
             <div className="h-12 bg-secondary rounded-xl w-40" />
           </div>
@@ -125,11 +256,14 @@ export default function IntegrationsPage() {
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex gap-3">
+      <div className="flex gap-3 flex-wrap">
         {tabs.map(tab => (
           <button
             key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
+            onClick={() => {
+              setActiveTab(tab.key);
+              if (tab.key === 'fastbots') loadFastbotsProfiles();
+            }}
             className={`flex items-center gap-2.5 px-5 py-3 rounded-xl font-medium transition-all ${
               activeTab === tab.key
                 ? 'bg-gradient-to-r from-purple-500/10 to-indigo-500/10 text-purple-700 dark:text-purple-300 border-2 border-purple-500/30 shadow-sm'
@@ -293,14 +427,183 @@ export default function IntegrationsPage() {
         </div>
       )}
 
+      {/* FastBots AI Tab */}
+      {activeTab === 'fastbots' && (
+        <div className="bg-card border border-border rounded-2xl overflow-hidden">
+          <div className="p-6 border-b border-border bg-gradient-to-r from-teal-50 to-emerald-50 dark:from-teal-950/20 dark:to-emerald-950/20">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-3xl">🧠</span>
+                <div>
+                  <h3 className="text-lg font-bold text-foreground">FastBots AI</h3>
+                  <p className="text-sm text-muted-foreground">AI chatbot integration — configurable per WhatsApp profile</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {fastbotsProfiles.length === 0 ? (
+            <div className="p-6 text-center">
+              <p className="text-muted-foreground">No WhatsApp profiles found. Create a profile first.</p>
+              <Button
+                variant="outline"
+                onClick={loadFastbotsProfiles}
+                className="mt-4"
+              >
+                🔄 Refresh
+              </Button>
+            </div>
+          ) : (
+            <div className="p-6 space-y-6">
+              {/* Profile Overview Table */}
+              <div>
+                <h4 className="text-sm font-semibold text-foreground mb-3">Profile Status</h4>
+                <div className="overflow-hidden rounded-xl border border-border">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-secondary/40">
+                        <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Profile</th>
+                        <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Phone</th>
+                        <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">Status</th>
+                        <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">Bot Key</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {fastbotsProfiles.map(p => (
+                        <tr key={p.profileId} className="hover:bg-secondary/20">
+                          <td className="px-4 py-2.5 font-medium text-foreground">
+                            {p.displayName || p.phoneNumber || p.profileId.substring(0, 8)}
+                          </td>
+                          <td className="px-4 py-2.5 text-muted-foreground font-mono text-xs">
+                            {p.phoneNumber || '—'}
+                          </td>
+                          <td className="px-4 py-2.5 text-center">
+                            <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${
+                              p.enabled ? 'text-emerald-600' : 'text-muted-foreground'
+                            }`}>
+                              <span className={`w-2 h-2 rounded-full ${p.enabled ? 'bg-emerald-500' : 'bg-gray-300'}`} />
+                              {p.enabled ? 'Active' : 'Disabled'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 text-center">
+                            <span className={`inline-flex items-center text-xs ${
+                              p.hasBotKey ? 'text-emerald-600' : 'text-muted-foreground'
+                            }`}>
+                              {p.hasBotKey ? '✓ Configured' : '— Not Set'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Profile Selector */}
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">Select Profile to Configure</label>
+                <select
+                  value={fastbotsSelectedProfile}
+                  onChange={e => handleFastbotsProfileChange(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl border border-border bg-background text-foreground text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                >
+                  <option value="">— Choose a profile —</option>
+                  {fastbotsProfiles.map(p => (
+                    <option key={p.profileId} value={p.profileId}>
+                      {p.displayName || p.phoneNumber || p.profileId} {p.enabled ? '🟢' : '⚪'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Configuration Card */}
+              {fastbotsSelectedProfile && (
+                <div className="space-y-5 p-5 bg-secondary/20 rounded-xl border border-border">
+                  <h4 className="text-sm font-semibold text-foreground">Configuration</h4>
+
+                  {/* Enable/Disable Toggle */}
+                  <div className="flex items-center justify-between py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Enable FastBots AI</p>
+                      <p className="text-xs text-muted-foreground">
+                        When enabled, incoming messages are sent to FastBots AI and the reply is sent automatically
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setFastbotsEnabled(!fastbotsEnabled)}
+                      className={`relative w-12 h-6 rounded-full transition-colors flex-shrink-0 ${
+                        fastbotsEnabled ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'
+                      }`}
+                    >
+                      <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${
+                        fastbotsEnabled ? 'translate-x-6' : ''
+                      }`} />
+                    </button>
+                  </div>
+
+                  {/* Bot API Key */}
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-2">
+                      FastBots Bot API Key
+                    </label>
+                    <Input
+                      type="password"
+                      value={fastbotsBotKey}
+                      onChange={e => setFastbotsBotKey(e.target.value)}
+                      placeholder={fastbotsHasKey ? '•••••••• (leave blank to keep current)' : 'Enter your FastBots bot API key'}
+                      className="font-mono text-sm"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Found in your FastBots bot Settings → Bot API Key (not the Account Integrations key)
+                    </p>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex gap-3 pt-2 flex-wrap">
+                    <Button
+                      onClick={handleFastbotsSave}
+                      disabled={fastbotsSaving}
+                      className="bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-white"
+                    >
+                      {fastbotsSaving ? 'Saving...' : '💾 Save Profile Config'}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={handleFastbotsTest}
+                      disabled={fastbotsTesting || (!fastbotsHasKey && !fastbotsBotKey)}
+                    >
+                      {fastbotsTesting ? 'Testing...' : '🔗 Test Connection'}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={handleFastbotsReset}
+                      disabled={fastbotsResetting}
+                      className="border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
+                    >
+                      {fastbotsResetting ? 'Resetting...' : '🗑️ Reset Chat History'}
+                    </Button>
+                  </div>
+
+                  {fastbotsHasKey && !fastbotsBotKey && (
+                    <p className="text-xs text-muted-foreground italic">
+                      A Bot API Key is already configured for this profile. Enter a new one only if you want to change it.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Info Banner */}
       <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-xl p-4 text-sm text-blue-700 dark:text-blue-300 flex items-start gap-3">
         <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
         </svg>
         <div>
-          <p className="font-medium mb-1">Environment variables required</p>
-          <p>Integration services read configuration from environment variables. Changes made here are saved for reference, but you may need to update your <code className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/50 rounded text-xs">.env</code> file and restart the API server for changes to take effect.</p>
+          <p className="font-medium mb-1">How FastBots AI works</p>
+          <p>When enabled for a profile, incoming WhatsApp messages are sent to your FastBots.ai bot. The AI reply is sent back automatically from the same profile. Conversation continuity is maintained via chatId. To toggle per profile, use the profile selector above.</p>
         </div>
       </div>
     </div>

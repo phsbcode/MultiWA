@@ -6,8 +6,8 @@ Application layer of MultiWA: the NestJS REST API gateway, the Next.js admin das
 
 ## Ownership
 
-- `apps/api/` — NestJS with Fastify adapter: REST endpoints, WebSocket (Socket.IO), Swagger docs, all backend modules (accounts, auth, profiles, messages, contacts, broadcast, automation, webhooks, integrations, etc.)
-- `apps/admin/` — Next.js 14 App Router: admin dashboard UI, authentication pages, automation flow builder (React Flow), analytics, settings
+- `apps/api/` — NestJS with Fastify adapter: REST endpoints, WebSocket (Socket.IO), Swagger docs, all backend modules (accounts, auth, profiles, messages, contacts, broadcast, automation, webhooks, integrations, etc.). Native FastBots configuration is stored per profile in `Profile.settings.fastbots`; replies must use the inbound profile ID.
+- `apps/admin/` — Next.js 14 App Router: admin dashboard UI, authentication pages, automation flow builder (React Flow), analytics, settings. The Integrations page owns the per-profile FastBots enable/disable control and Bot API key form.
 - `apps/worker/` — BullMQ consumer: message processing, webhook delivery, automation execution, scheduled tasks
 
 ## Local Contracts

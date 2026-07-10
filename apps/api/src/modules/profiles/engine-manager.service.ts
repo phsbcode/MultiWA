@@ -13,6 +13,7 @@ import * as QRCode from 'qrcode';
 import { RuleEngineService, IncomingMessage } from '../automation/rule-engine.service';
 import { NotificationsService, NotificationType } from '../notifications/notifications.service';
 import { AppEvent, HooksService } from '../hooks/hooks.service';
+import { FastBotsService } from '../integrations/fastbots.service';
 import { resolveSenderIdentity } from './sender-identity';
 
 
@@ -33,6 +34,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     private readonly ruleEngineService: RuleEngineService,
     private readonly notificationsService: NotificationsService,
     private readonly hooksService: HooksService,
+    private readonly fastBotsService: FastBotsService,
   ) {
     this.logger.log('EngineManagerService initialized');
   }
@@ -719,6 +721,19 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             if (results.length > 0) {
               this.logger.log(`Automation processed ${results.length} action(s) for message from ${senderJid}`);
             }
+          }
+
+          // === FASTBOTS AI INTEGRATION ===
+          // If FastBots is enabled for this profile, process the message
+          // through the AI chatbot and send the reply.
+          if (!isGroup && content?.text) {
+            this.fastBotsService.handleIncomingMessage(
+              profileId,
+              jid,
+              content.text,
+            ).catch(err => {
+              this.logger.warn(`FastBots integration error: ${err.message}`);
+            });
           }
         } catch (error) {
           this.logger.error(`Error processing incoming message:`, error);
