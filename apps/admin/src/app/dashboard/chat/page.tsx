@@ -208,8 +208,12 @@ export default function ChatPage() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<string>('');
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [conversationsLoading, setConversationsLoading] = useState(false);
+  const [conversationsError, setConversationsError] = useState<string | null>(null);
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [messagesError, setMessagesError] = useState<string | null>(null);
   const [messageInput, setMessageInput] = useState('');
   const [sending, setSending] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -229,6 +233,8 @@ export default function ChatPage() {
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastTypingSentRef = useRef<number>(0);
   const socketRef = useRef<Socket | null>(null);
+  const conversationRequestRef = useRef(0);
+  const messageRequestRef = useRef(0);
 
   // Emoji categories
   const emojiCategories: Record<string, { label: string; emojis: string[] }> = {
@@ -326,12 +332,16 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (selectedProfile) {
-      loadConversations();
+      setConversations([]);
+      setSelectedConversation(null);
+      setMessages([]);
+      loadConversations(true);
     }
   }, [selectedProfile]);
 
   useEffect(() => {
     if (selectedConversation) {
+      setMessages([]);
       loadMessages(selectedConversation.id);
       // Mark as read when opening a conversation
       if (selectedConversation.unreadCount > 0) {
@@ -358,51 +368,86 @@ export default function ChatPage() {
     if (res.data) {
       setProfiles(res.data);
       if (res.data.length > 0) {
+        conversationRequestRef.current += 1;
+        messageRequestRef.current += 1;
+        setConversationsLoading(true);
         setSelectedProfile(res.data[0].id);
       }
     }
     setLoading(false);
   };
 
-  const loadConversations = async () => {
-    const res = await api.getConversations(selectedProfile);
-    if (res.data) {
-      const rawConvs = res.data.conversations || [];
-      // Filter out status@broadcast (WhatsApp broadcast status updates)
-      const filteredConvs = rawConvs.filter((conv: Conversation) => 
-        !conv.jid?.includes('status@broadcast') && !conv.jid?.includes('@broadcast')
-      );
-      // Deduplicate by normalized JID (strip @c.us / @s.whatsapp.net / @g.us suffixes)
-      // This handles legacy @c.us vs current @s.whatsapp.net for the same phone number
-      const normalizeJid = (jid: string) => jid?.replace(/@(s\.whatsapp\.net|c\.us|g\.us)$/, '') || jid;
-      const jidMap = new Map<string, Conversation>();
-      for (const conv of filteredConvs) {
-        const key = normalizeJid(conv.jid);
-        const existing = jidMap.get(key);
-        if (!existing) {
-          jidMap.set(key, conv);
-        } else {
-          // Keep the one with the most recent lastMessageAt, sum unreadCounts
-          const existingTime = new Date(existing.lastMessageAt || 0).getTime();
-          const newTime = new Date(conv.lastMessageAt || 0).getTime();
-          if (newTime > existingTime) {
-            jidMap.set(key, { ...conv, unreadCount: conv.unreadCount + existing.unreadCount });
+  const loadConversations = async (showLoading = false) => {
+    const requestId = ++conversationRequestRef.current;
+    if (showLoading) setConversationsLoading(true);
+    setConversationsError(null);
+    try {
+      const res = await api.getConversations(selectedProfile);
+      if (requestId !== conversationRequestRef.current) return;
+      if (res.data) {
+        const rawConvs = res.data.conversations || [];
+        // Filter out status@broadcast (WhatsApp broadcast status updates)
+        const filteredConvs = rawConvs.filter((conv: Conversation) =>
+          !conv.jid?.includes('status@broadcast') && !conv.jid?.includes('@broadcast')
+        );
+        // Deduplicate by normalized JID (strip @c.us / @s.whatsapp.net / @g.us suffixes)
+        // This handles legacy @c.us vs current @s.whatsapp.net for the same phone number
+        const normalizeJid = (jid: string) => jid?.replace(/@(s\.whatsapp\.net|c\.us|g\.us)$/, '') || jid;
+        const jidMap = new Map<string, Conversation>();
+        for (const conv of filteredConvs) {
+          const key = normalizeJid(conv.jid);
+          const existing = jidMap.get(key);
+          if (!existing) {
+            jidMap.set(key, conv);
           } else {
-            jidMap.set(key, { ...existing, unreadCount: existing.unreadCount + conv.unreadCount });
+            // Keep the one with the most recent lastMessageAt, sum unreadCounts
+            const existingTime = new Date(existing.lastMessageAt || 0).getTime();
+            const newTime = new Date(conv.lastMessageAt || 0).getTime();
+            if (newTime > existingTime) {
+              jidMap.set(key, { ...conv, unreadCount: conv.unreadCount + existing.unreadCount });
+            } else {
+              jidMap.set(key, { ...existing, unreadCount: existing.unreadCount + conv.unreadCount });
+            }
           }
         }
+        setConversations(Array.from(jidMap.values()));
+      } else {
+        setConversationsError('Could not load conversations.');
       }
-      setConversations(Array.from(jidMap.values()));
+    } catch {
+      if (requestId === conversationRequestRef.current) {
+        setConversationsError('Could not load conversations.');
+      }
+    } finally {
+      if (requestId === conversationRequestRef.current) {
+        setConversationsLoading(false);
+      }
     }
   };
 
   const loadMessages = async (conversationId: string) => {
-    const res = await api.getMessages(conversationId);
-    if (res.data) {
-      // API returns { messages: [...], hasMore } or possibly an array
-      const raw = res.data as any;
-      const msgArray = Array.isArray(raw) ? raw : (raw.messages || []);
-      setMessages(msgArray);
+    const requestId = ++messageRequestRef.current;
+    setMessagesLoading(true);
+    setMessagesError(null);
+    try {
+      const res = await api.getMessages(conversationId);
+      if (requestId !== messageRequestRef.current) return;
+      if (res.data) {
+        // API returns { messages: [...], hasMore } or possibly an array
+        const raw = res.data as any;
+        const msgArray = Array.isArray(raw) ? raw : (raw.messages || []);
+        setMessages(msgArray);
+      } else {
+        setMessagesError('Could not load messages.');
+      }
+    } catch {
+      if (requestId === messageRequestRef.current) {
+        setMessagesError('Could not load messages.');
+      }
+    } finally {
+      if (requestId === messageRequestRef.current) {
+        setMessagesLoading(false);
+      }
     }
   };
 
@@ -678,7 +723,15 @@ export default function ChatPage() {
       <div className="w-96 border-r border-border flex flex-col">
         {/* Sidebar Header */}
         <div className="p-4 border-b border-border bg-secondary/30">
-          <Select value={selectedProfile} onValueChange={setSelectedProfile}>
+          <Select
+            value={selectedProfile}
+            onValueChange={(profileId) => {
+              conversationRequestRef.current += 1;
+              messageRequestRef.current += 1;
+              setConversationsLoading(true);
+              setSelectedProfile(profileId);
+            }}
+          >
             <SelectTrigger className="w-full mb-3">
               <SelectValue placeholder="Select profile" />
             </SelectTrigger>
@@ -709,7 +762,31 @@ export default function ChatPage() {
 
         {/* Conversation List */}
         <div className="flex-1 overflow-y-auto">
-          {filteredConversations.length === 0 ? (
+          {conversationsLoading ? (
+            <div className="p-4 space-y-3" role="status" aria-live="polite">
+              <div className="flex items-center gap-2 px-1 text-sm text-muted-foreground">
+                <span className="h-4 w-4 rounded-full border-2 border-[#25D366] border-t-transparent animate-spin" />
+                <span>Loading conversations…</span>
+              </div>
+              {[1, 2, 3, 4, 5].map(i => (
+                <div key={i} className="flex items-center gap-3 py-2">
+                  <Skeleton className="h-12 w-12 shrink-0 rounded-full" />
+                  <div className="flex-1 space-y-2">
+                    <Skeleton className="h-4 w-2/3" />
+                    <Skeleton className="h-3 w-full" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : conversationsError ? (
+            <div className="p-8 text-center" role="alert">
+              <div className="text-3xl mb-3">⚠️</div>
+              <p className="text-sm text-muted-foreground mb-3">{conversationsError}</p>
+              <Button variant="outline" size="sm" onClick={() => loadConversations(true)}>
+                Try again
+              </Button>
+            </div>
+          ) : filteredConversations.length === 0 ? (
             <div className="p-8 text-center">
               <div className="text-4xl mb-3">💬</div>
               <p className="text-sm text-muted-foreground">No conversations yet</p>
@@ -718,7 +795,12 @@ export default function ChatPage() {
             filteredConversations.map(conv => (
               <div
                 key={conv.id}
-                onClick={() => setSelectedConversation(conv)}
+                onClick={() => {
+                  if (conv.id !== selectedConversation?.id) {
+                    messageRequestRef.current += 1;
+                    setSelectedConversation(conv);
+                  }
+                }}
                 className={`flex items-center gap-3 p-4 cursor-pointer hover:bg-secondary/50 transition-colors border-b border-border ${
                   selectedConversation?.id === conv.id ? 'bg-secondary' : ''
                 }`}
@@ -812,7 +894,24 @@ export default function ChatPage() {
               className="flex-1 overflow-y-auto p-4 space-y-3"
               style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' viewBox=\'0 0 60 60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' fill-rule=\'evenodd\'%3E%3Cg fill=\'%239C92AC\' fill-opacity=\'0.03\'%3E%3Cpath d=\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")' }}
             >
-              {messages.length === 0 ? (
+              {messagesLoading ? (
+                <div className="flex items-center justify-center h-full" role="status" aria-live="polite">
+                  <div className="text-center space-y-4">
+                    <span className="inline-block h-8 w-8 rounded-full border-2 border-[#25D366] border-t-transparent animate-spin" />
+                    <p className="text-sm text-muted-foreground">Loading messages…</p>
+                  </div>
+                </div>
+              ) : messagesError ? (
+                <div className="flex items-center justify-center h-full" role="alert">
+                  <div className="text-center">
+                    <div className="text-4xl mb-3">⚠️</div>
+                    <p className="text-sm text-muted-foreground mb-3">{messagesError}</p>
+                    <Button variant="outline" size="sm" onClick={() => loadMessages(selectedConversation.id)}>
+                      Try again
+                    </Button>
+                  </div>
+                </div>
+              ) : messages.length === 0 ? (
                 <div className="flex items-center justify-center h-full">
                   <div className="text-center">
                     <div className="text-6xl mb-4">🔐</div>
