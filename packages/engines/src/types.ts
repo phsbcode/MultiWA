@@ -1,6 +1,8 @@
 // MultiWA Gateway - Engine Types
 // packages/engines/src/types.ts
 
+import type { PresenceUpdate } from './presence';
+
 export type EngineType = 'whatsapp-web-js' | 'baileys' | 'mock';
 
 export interface EngineConfig {
@@ -16,6 +18,7 @@ export interface EngineConfig {
   onDisconnected?: (reason: string) => void;
   onMessage?: (message: any) => void;
   onMessageAck?: (messageId: string, status: string) => void;
+  onPresenceUpdate?: (presence: PresenceUpdate) => void;
 }
 
 export interface SendMessageOptions {

@@ -1,7 +1,7 @@
 // MultiWA Gateway - Conversations Service
 // apps/api/src/modules/conversations/conversations.service.ts
 
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import { GroupsService } from '../groups/groups.service';
 
@@ -263,6 +263,107 @@ export class ConversationsService {
     messages.reverse();
 
     return { messages: await this.withSenderNames(messages), hasMore: messages.length === (options.limit || 50) };
+  }
+
+  async searchMessages(id: string, profileId: string, options: { query: string; limit?: number; cursor?: string }) {
+    const query = options.query.trim();
+    if (!query) throw new BadRequestException('Search query is required');
+
+    const conversation = await prisma.conversation.findFirst({
+      where: { id, profileId },
+      select: { id: true },
+    });
+    if (!conversation) throw new NotFoundException('Conversation not found');
+
+    const limit = Math.min(Math.max(options.limit || 30, 1), 100);
+    const where: any = {
+      conversationId: id,
+      profileId,
+      type: { notIn: ['protocol', 'status', 'revoked'] },
+      OR: [
+        { content: { path: ['text'], string_contains: query, mode: 'insensitive' } },
+        { content: { path: ['caption'], string_contains: query, mode: 'insensitive' } },
+        { content: { path: ['filename'], string_contains: query, mode: 'insensitive' } },
+        { metadata: { path: ['senderName'], string_contains: query, mode: 'insensitive' } },
+        { metadata: { path: ['senderPhone'], string_contains: query, mode: 'insensitive' } },
+      ],
+    };
+
+    if (options.cursor) {
+      const cursor = await prisma.message.findFirst({
+        where: { id: options.cursor, conversationId: id, profileId },
+        select: { id: true, timestamp: true },
+      });
+      if (cursor) {
+        where.AND = [{
+          OR: [
+            { timestamp: { lt: cursor.timestamp } },
+            { timestamp: cursor.timestamp, id: { lt: cursor.id } },
+          ],
+        }];
+      }
+    }
+
+    const found = await prisma.message.findMany({
+      where,
+      take: limit + 1,
+      orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
+    });
+    const hasMore = found.length > limit;
+    const messages = found.slice(0, limit);
+
+    return {
+      messages: await this.withSenderNames(messages),
+      hasMore,
+      nextCursor: hasMore ? messages[messages.length - 1]?.id || null : null,
+    };
+  }
+
+  async getMessageContext(id: string, messageId: string, profileId: string, options: { before?: number; after?: number }) {
+    const conversation = await prisma.conversation.findFirst({
+      where: { id, profileId },
+      select: { id: true },
+    });
+    if (!conversation) throw new NotFoundException('Conversation not found');
+
+    const target = await prisma.message.findFirst({
+      where: { id: messageId, conversationId: id, profileId },
+    });
+    if (!target) throw new NotFoundException('Message not found');
+
+    const beforeLimit = Math.min(Math.max(options.before ?? 20, 0), 50);
+    const afterLimit = Math.min(Math.max(options.after ?? 20, 0), 50);
+    const [beforeMessages, afterMessages] = await Promise.all([
+      prisma.message.findMany({
+        where: {
+          conversationId: id,
+          profileId,
+          OR: [
+            { timestamp: { lt: target.timestamp } },
+            { timestamp: target.timestamp, id: { lt: target.id } },
+          ],
+        },
+        take: beforeLimit,
+        orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
+      }),
+      prisma.message.findMany({
+        where: {
+          conversationId: id,
+          profileId,
+          OR: [
+            { timestamp: { gt: target.timestamp } },
+            { timestamp: target.timestamp, id: { gt: target.id } },
+          ],
+        },
+        take: afterLimit,
+        orderBy: [{ timestamp: 'asc' }, { id: 'asc' }],
+      }),
+    ]);
+
+    return {
+      messages: await this.withSenderNames([...beforeMessages.reverse(), target, ...afterMessages]),
+      targetMessageId: target.id,
+    };
   }
 
   private async withSenderNames(messages: any[]) {

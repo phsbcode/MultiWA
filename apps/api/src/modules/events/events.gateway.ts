@@ -7,11 +7,16 @@ import {
   SubscribeMessage,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
   ConnectedSocket,
   MessageBody,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { prisma } from '@multiwa/database';
+import { createHash } from 'crypto';
+import { WsException } from '@nestjs/websockets';
 
 @WebSocketGateway({
   namespace: '/ws',
@@ -21,7 +26,7 @@ import { Logger } from '@nestjs/common';
   },
   transports: ['websocket', 'polling'],
 })
-export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(EventsGateway.name);
 
   @WebSocketServer()
@@ -36,6 +41,39 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   // Cache the latest connection status per profile for the same reason.
   private latestStatus: Map<string, { status: string; phoneNumber?: string }> = new Map();
+
+  constructor(private readonly jwtService: JwtService) {}
+
+  afterInit(server: Server) {
+    server.use(async (client, next) => {
+      try {
+        client.data.principal = await this.authenticate(client);
+        next();
+      } catch {
+        next(new Error('Unauthorized'));
+      }
+    });
+  }
+
+  private async authenticate(client: Socket) {
+    const authorization = client.handshake.headers.authorization;
+    const bearer = authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined;
+    const token = client.handshake.auth?.token || bearer;
+    if (token) {
+      const payload = await this.jwtService.verifyAsync<{ sub: string }>(token);
+      const user = await prisma.user.findUnique({ where: { id: payload.sub } });
+      if (!user?.isActive) throw new Error('Inactive user');
+      return { id: user.id, organizationId: user.organizationId };
+    }
+
+    const apiKey = client.handshake.auth?.apiKey || client.handshake.headers['x-api-key'] || client.handshake.query.apiKey;
+    if (typeof apiKey !== 'string' || !apiKey) throw new Error('Missing credentials');
+    const keyHash = createHash('sha256').update(apiKey).digest('hex');
+    const key = await prisma.apiKey.findUnique({ where: { keyHash }, include: { user: true } });
+    if (!key || !key.user.isActive || (key.expiresAt && key.expiresAt < new Date())) throw new Error('Invalid API key');
+    await prisma.apiKey.update({ where: { id: key.id }, data: { lastUsedAt: new Date() } });
+    return { id: key.user.id, organizationId: key.user.organizationId, apiKeyId: key.id };
+  }
 
   handleConnection(client: Socket) {
     this.logger.log(`Client connected to /ws namespace: ${client.id}`);
@@ -54,11 +92,18 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   // Handle 'join' event from frontend (matches frontend: socket.emit('join', { profileId }))
   @SubscribeMessage('join')
-  handleJoin(
+  async handleJoin(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { profileId: string },
   ) {
-    const { profileId } = data;
+    const profileId = data?.profileId?.trim();
+    const principal = client.data.principal;
+    if (!profileId || !principal?.organizationId) throw new WsException('Profile access denied');
+    const profile = await prisma.profile.findFirst({
+      where: { id: profileId, workspace: { organizationId: principal.organizationId } },
+      select: { id: true },
+    });
+    if (!profile) throw new WsException('Profile access denied');
     this.logger.log(`Client ${client.id} joining profile room: ${profileId}`);
     
     client.join(`profile:${profileId}`);
@@ -86,7 +131,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('subscribe:profile')
-  handleSubscribeProfile(
+  async handleSubscribeProfile(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { profileId: string },
   ) {
@@ -156,6 +201,10 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   // Emit message event
   emitMessage(profileId: string, message: any) {
     this.server.to(`profile:${profileId}`).emit('message', message);
+  }
+
+  emitPresence(profileId: string, presence: any) {
+    this.server.to(`profile:${profileId}`).emit('presence:update', presence);
   }
 
   // Emit connection success with phone info

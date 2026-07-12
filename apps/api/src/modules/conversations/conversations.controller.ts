@@ -1,10 +1,12 @@
 // MultiWA Gateway - Conversations Controller
 // apps/api/src/modules/conversations/conversations.controller.ts
 
-import { Controller, Get, Put, Delete, Param, Query, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Put, Delete, Param, Query, Body, UseGuards, Request, NotFoundException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { ConversationsService } from './conversations.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { prisma } from '@multiwa/database';
+import { MessageContextQueryDto, SearchMessagesQueryDto } from './dto/message-history-query.dto';
 
 @ApiTags('Conversations')
 @Controller('conversations')
@@ -13,6 +15,14 @@ import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 @ApiSecurity('api-key')
 export class ConversationsController {
   constructor(private readonly service: ConversationsService) {}
+
+  private async assertProfileAccess(profileId: string, organizationId: string) {
+    const profile = await prisma.profile.findFirst({
+      where: { id: profileId, workspace: { organizationId } },
+      select: { id: true },
+    });
+    if (!profile) throw new NotFoundException('Profile not found');
+  }
 
   @Get()
   @ApiOperation({ summary: 'List conversations' })
@@ -79,6 +89,43 @@ export class ConversationsController {
   @ApiOperation({ summary: 'Delete conversation and messages' })
   async delete(@Param('id') id: string) {
     return this.service.delete(id);
+  }
+
+  @Get(':id/messages/search')
+  @ApiOperation({ summary: 'Search the full message history of a conversation' })
+  @ApiQuery({ name: 'profileId', required: true })
+  @ApiQuery({ name: 'q', required: true })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiQuery({ name: 'cursor', required: false })
+  async searchMessages(
+    @Param('id') id: string,
+    @Request() req: any,
+    @Query() query: SearchMessagesQueryDto,
+  ) {
+    await this.assertProfileAccess(query.profileId, req.user.organizationId);
+    return this.service.searchMessages(id, query.profileId, {
+      query: query.q,
+      limit: query.limit,
+      cursor: query.cursor,
+    });
+  }
+
+  @Get(':id/messages/:messageId/context')
+  @ApiOperation({ summary: 'Get a message with chronological surrounding context' })
+  @ApiQuery({ name: 'profileId', required: true })
+  @ApiQuery({ name: 'before', required: false })
+  @ApiQuery({ name: 'after', required: false })
+  async getMessageContext(
+    @Param('id') id: string,
+    @Param('messageId') messageId: string,
+    @Request() req: any,
+    @Query() query: MessageContextQueryDto,
+  ) {
+    await this.assertProfileAccess(query.profileId, req.user.organizationId);
+    return this.service.getMessageContext(id, messageId, query.profileId, {
+      before: query.before,
+      after: query.after,
+    });
   }
 
   @Get(':id/messages')
