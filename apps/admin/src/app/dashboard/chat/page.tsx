@@ -3,12 +3,16 @@
 
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { getSocketUrl } from '@/lib/socket';
-import { api, Profile, Conversation } from '@/lib/api';
+import { api, Profile, Conversation, Contact } from '@/lib/api';
+import { groupChatMessages } from '@/lib/chat-message-grouping';
+import { applyPresenceEvent, expireTransientPresence, getPresenceLabel, type ChatPresenceEvent, type PresenceRecords } from '@/lib/chat-presence';
+import { applyLiveTimelineUpdate, createLongPressController, getVisibleWindow, resolveChatShortcut, shouldSendTypingStop } from '@/lib/chat-interactions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -34,12 +38,33 @@ interface Message {
   senderName?: string;
   senderPhone?: string;
   senderJid?: string;
+  quotedMessageId?: string;
+  reactions?: string[];
   metadata?: {
     senderName?: string;
     senderPhone?: string;
     originalSenderJid?: string;
   };
 }
+
+interface PendingAttachment {
+  file: File;
+  objectUrl: string;
+  type: 'image' | 'video' | 'audio' | 'document';
+}
+
+const MESSAGE_PAGE_SIZE = 40;
+
+const normalizeNewChatPhone = (value: string) => {
+  let phone = value.replace(/\D/g, '');
+  if (phone.startsWith('00')) phone = phone.slice(2);
+  if (phone.startsWith('0')) phone = `62${phone.slice(1)}`;
+  return phone;
+};
+
+const isValidInternationalPhone = (phone: string) => /^[1-9]\d{6,14}$/.test(phone);
+
+const canonicalConversationPhone = (jid: string) => jid.replace(/@(s\.whatsapp\.net|c\.us)$/, '');
 
 // Format phone number for display
 const formatPhone = (phone: string) => {
@@ -94,6 +119,23 @@ const getLastMessagePreview = (lastMessage: any) => {
     case 'ptt': return '🎙️ Voice message';
     default: return '💬 Message';
   }
+};
+
+const getMessagePreview = (message: Message) => {
+  const text = message.content?.text || message.content?.caption;
+  if (text) return sanitizeChatText(text);
+  return getLastMessagePreview(message);
+};
+
+const foldReactionMessages = (items: Message[]) => {
+  const visible = items.filter(message => message.type !== 'reaction').map(message => ({ ...message }));
+  for (const reaction of items.filter(message => message.type === 'reaction')) {
+    const targetId = reaction.content?.messageId;
+    const target = visible.find(message => message.id === targetId || message.messageId === targetId);
+    const emoji = reaction.content?.emoji;
+    if (target && emoji) target.reactions = [...(target.reactions || []), emoji];
+  }
+  return visible;
 };
 
 // Fix media URLs that use Docker-internal hostnames
@@ -160,6 +202,12 @@ const getMessageSenderLabel = (msg: Message) => {
   return jidPhone ? formatPhone(jidPhone) : 'Unknown WhatsApp contact';
 };
 
+const getReplySenderLabel = (msg: Message, conversation: Conversation) => {
+  if (msg.direction === 'outgoing') return 'You';
+  const sender = getMessageSenderLabel(msg);
+  return sender === 'Unknown WhatsApp contact' ? getDisplayName(conversation) : sender;
+};
+
 // Format timestamp
 const formatTime = (timestamp: string) => {
   const date = new Date(timestamp);
@@ -174,6 +222,21 @@ const formatTime = (timestamp: string) => {
     return date.toLocaleDateString([], { weekday: 'short' });
   }
   return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+};
+
+const formatDateLabel = (timestamp: string) => {
+  const date = new Date(timestamp);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) return 'TODAY';
+  if (date.toDateString() === yesterday.toDateString()) return 'YESTERDAY';
+  return date.toLocaleDateString([], { day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase();
+};
+
+const startsNewDay = (messages: Message[], index: number) => {
+  if (index === 0) return true;
+  return new Date(messages[index - 1].timestamp).toDateString() !== new Date(messages[index].timestamp).toDateString();
 };
 
 // Message status icon
@@ -213,8 +276,40 @@ export default function ChatPage() {
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
+  const [olderMessagesLoading, setOlderMessagesLoading] = useState(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [newMessagesBelow, setNewMessagesBelow] = useState(0);
+  const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'reconnecting' | 'disconnected'>('connecting');
+  const [presenceRecords, setPresenceRecords] = useState<PresenceRecords>({});
+  const [retryingMessageId, setRetryingMessageId] = useState<string | null>(null);
+  const [pendingAttachment, setPendingAttachment] = useState<PendingAttachment | null>(null);
+  const [attachmentCaption, setAttachmentCaption] = useState('');
+  const [attachmentSending, setAttachmentSending] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [attachmentTempMessageId, setAttachmentTempMessageId] = useState<string | null>(null);
+  const [showNewChat, setShowNewChat] = useState(false);
+  const [newChatContacts, setNewChatContacts] = useState<Contact[]>([]);
+  const [newChatQuery, setNewChatQuery] = useState('');
+  const [newChatLoading, setNewChatLoading] = useState(false);
+  const [newChatError, setNewChatError] = useState<string | null>(null);
+  const [startingNewChat, setStartingNewChat] = useState(false);
   const [messagesError, setMessagesError] = useState<string | null>(null);
   const [messageInput, setMessageInput] = useState('');
+  const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [activeMessageMenu, setActiveMessageMenu] = useState<string | null>(null);
+  const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null);
+  const [actionSheetMessage, setActionSheetMessage] = useState<Message | null>(null);
+  const [reactionPickerMessage, setReactionPickerMessage] = useState<Message | null>(null);
+  const [showMessageSearch, setShowMessageSearch] = useState(false);
+  const [messageSearchQuery, setMessageSearchQuery] = useState('');
+  const [currentSearchIndex, setCurrentSearchIndex] = useState(0);
+  const [remoteMessageSearchMatches, setRemoteMessageSearchMatches] = useState<Message[]>([]);
+  const [messageSearchLoading, setMessageSearchLoading] = useState(false);
+  const [messageSearchError, setMessageSearchError] = useState<string | null>(null);
+  const [messageSearchRetryNonce, setMessageSearchRetryNonce] = useState(0);
+  const [messageSearchHasMore, setMessageSearchHasMore] = useState(false);
+  const [messageSearchNextCursor, setMessageSearchNextCursor] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -228,13 +323,37 @@ export default function ChatPage() {
   const [scheduling, setScheduling] = useState(false);
   const [emojiCategory, setEmojiCategory] = useState('smileys');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const messageElementRefs = useRef(new Map<string, HTMLDivElement>());
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const conversationSearchRef = useRef<HTMLInputElement>(null);
+  const messageSearchInputRef = useRef<HTMLInputElement>(null);
   const attachRef = useRef<HTMLInputElement>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastTypingSentRef = useRef<number>(0);
+  const typingStopTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const conversationRequestRef = useRef(0);
   const messageRequestRef = useRef(0);
+  const olderMessagesRequestRef = useRef(false);
+  const previousLastMessageIdRef = useRef<string | null>(null);
+  const retryingMessageRef = useRef<string | null>(null);
+  const selectedConversationRef = useRef<Conversation | null>(null);
+  const materializedConversationIdRef = useRef<string | null>(null);
+  const startingNewChatRef = useRef(false);
+  const messageSearchRequestRef = useRef(0);
+  const messageContextRequestRef = useRef(0);
+  const preSearchMessagesRef = useRef<Message[] | null>(null);
+  const longPressControllerRef = useRef<ReturnType<typeof createLongPressController<Message>> | null>(null);
+  if (!longPressControllerRef.current) {
+    longPressControllerRef.current = createLongPressController({
+      delayMs: 500,
+      movementPx: 10,
+      onLongPress: message => {
+        setFocusedMessageId(message.id);
+        setActionSheetMessage(message);
+      },
+    });
+  }
 
   // Emoji categories
   const emojiCategories: Record<string, { label: string; emojis: string[] }> = {
@@ -246,16 +365,106 @@ export default function ChatPage() {
     nature: { label: '🌿', emojis: ['🌿', '🌸', '🌺', '🌻', '🌼', '🍀', '🌙', '☀️', '🌈', '🔥', '💧', '⛄', '🌊', '🌴', '🍁', '🌾'] },
   };
 
+  const normalizedMessageSearch = messageSearchQuery.trim().toLowerCase();
+  const localMessageSearchMatches = normalizedMessageSearch
+    ? messages.filter(message => {
+        const searchableText = message.content?.text || message.content?.caption || message.content?.filename || '';
+        return searchableText.toLowerCase().includes(normalizedMessageSearch);
+      })
+    : [];
+  const messageSearchMatches = Array.from(new Map(
+    [...localMessageSearchMatches, ...remoteMessageSearchMatches].map(message => [message.id, message])
+  ).values());
+  const activeSearchMessageId = messageSearchMatches[currentSearchIndex]?.id;
+  const groupedMessages = groupChatMessages(messages);
+  const presenceLabel = getPresenceLabel(
+    presenceRecords,
+    selectedConversation?.type || 'individual',
+    new Date(),
+    jid => {
+      const sender = messages.find(message => message.senderJid === jid || message.metadata?.originalSenderJid === jid);
+      return sender ? getMessageSenderLabel(sender) : formatPhone(jid.split('@')[0]);
+    },
+  );
+  const conversationSubtitle = presenceLabel || getConversationSubtitle(selectedConversation);
+
   useEffect(() => {
     loadProfiles();
   }, []);
+
+  useEffect(() => {
+    const requestId = ++messageSearchRequestRef.current;
+    setCurrentSearchIndex(0);
+    setRemoteMessageSearchMatches([]);
+    setMessageSearchHasMore(false);
+    setMessageSearchNextCursor(null);
+    setMessageSearchError(null);
+    if (!showMessageSearch || normalizedMessageSearch.length < 2 || !selectedConversation || selectedConversation.id.startsWith('draft:') || !selectedProfile) {
+      setMessageSearchLoading(false);
+      return;
+    }
+
+    const timeout = window.setTimeout(async () => {
+      setMessageSearchLoading(true);
+      const conversationId = selectedConversation.id;
+      try {
+        const response = await api.searchConversationMessages(conversationId, selectedProfile, messageSearchQuery.trim(), { limit: 30 });
+        if (requestId !== messageSearchRequestRef.current || selectedConversationRef.current?.id !== conversationId) return;
+        if (!response.data) throw new Error(response.error || 'Could not search message history');
+        setRemoteMessageSearchMatches(response.data.messages || []);
+        setMessageSearchHasMore(response.data.hasMore);
+        setMessageSearchNextCursor(response.data.nextCursor);
+      } catch (error) {
+        if (requestId !== messageSearchRequestRef.current) return;
+        setMessageSearchError(error instanceof Error ? error.message : 'Could not search message history');
+      } finally {
+        if (requestId === messageSearchRequestRef.current) setMessageSearchLoading(false);
+      }
+    }, 350);
+
+    return () => window.clearTimeout(timeout);
+  }, [messageSearchQuery, normalizedMessageSearch, selectedConversation?.id, selectedProfile, showMessageSearch, messageSearchRetryNonce]);
+
+  useEffect(() => {
+    if (!activeSearchMessageId || !selectedConversation || !selectedProfile) return;
+    const loadedElement = messageElementRefs.current.get(activeSearchMessageId);
+    if (loadedElement) {
+      loadedElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+
+    const requestId = ++messageContextRequestRef.current;
+    const conversationId = selectedConversation.id;
+    void api.getConversationMessageContext(conversationId, activeSearchMessageId, selectedProfile, { before: 20, after: 20 }).then(response => {
+      if (requestId !== messageContextRequestRef.current || selectedConversationRef.current?.id !== conversationId || !response.data) return;
+      setMessages(current => {
+        if (!preSearchMessagesRef.current) preSearchMessagesRef.current = current;
+        return response.data?.messages || [];
+      });
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+        messageElementRefs.current.get(activeSearchMessageId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }));
+    }).catch(() => {
+      if (requestId === messageContextRequestRef.current) setMessageSearchError('Could not load message context');
+    });
+  }, [activeSearchMessageId, selectedConversation?.id, selectedProfile]);
+
+  useEffect(() => {
+    const objectUrl = pendingAttachment?.objectUrl;
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [pendingAttachment?.objectUrl]);
 
   // WebSocket connection for real-time message status updates
   useEffect(() => {
     if (!selectedProfile) return;
 
+    setConnectionState('connecting');
+    const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
     const socket = io(`${getSocketUrl()}/ws`, {
       transports: ['websocket', 'polling'],
+      auth: { token },
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
@@ -265,45 +474,81 @@ export default function ChatPage() {
 
     socket.on('connect', () => {
       console.log('[WS] Connected, joining profile:', selectedProfile);
+      setConnectionState('connected');
       socket.emit('join', { profileId: selectedProfile });
     });
 
     socket.on('disconnect', (reason) => {
       console.log('[WS] Disconnected:', reason);
+      setConnectionState(socket.active ? 'reconnecting' : 'disconnected');
+      setPresenceRecords({});
     });
 
-    socket.on('reconnect', (attempt) => {
+    socket.io.on('reconnect_attempt', () => {
+      setConnectionState('reconnecting');
+    });
+
+    socket.io.on('reconnect', (attempt) => {
       console.log('[WS] Reconnected after', attempt, 'attempts');
+      setConnectionState('connected');
       socket.emit('join', { profileId: selectedProfile });
+    });
+
+    socket.on('connection:status', (data: { profileId: string; status: string }) => {
+      if (data.profileId !== selectedProfile) return;
+      if (data.status === 'connected') setConnectionState('connected');
+      if (data.status === 'disconnected') {
+        setConnectionState('disconnected');
+        setPresenceRecords({});
+      }
+      if (data.status === 'connecting' || data.status === 'reconnecting') setConnectionState('reconnecting');
     });
 
     // Real-time message status updates (sent → delivered → read)
     socket.on('message:ack', (data: { profileId: string; messageId: string; status: string }) => {
-      console.log('[WS] message:ack received:', data);
       if (data.profileId === selectedProfile) {
-        setMessages(prev => prev.map(msg => {
-          // Match by WhatsApp messageId (primary match)
-          if (msg.messageId && msg.messageId === data.messageId) {
-            return { ...msg, status: data.status as Message['status'] };
-          }
-          return msg;
-        }));
+        setMessages(prev => {
+          const update = (timeline: Message[]) => timeline.map(msg => {
+            // Match by WhatsApp messageId (primary match)
+            if (msg.messageId && msg.messageId === data.messageId) {
+              return { ...msg, status: data.status as Message['status'] };
+            }
+            return msg;
+          });
+          const updated = applyLiveTimelineUpdate(preSearchMessagesRef.current, prev, update);
+          preSearchMessagesRef.current = updated.canonical;
+          return updated.visible;
+        });
       }
+    });
+
+    socket.on('presence:update', (data: ChatPresenceEvent) => {
+      const conversationId = selectedConversationRef.current?.id;
+      if (!conversationId) return;
+      setPresenceRecords(current => applyPresenceEvent(current, data, selectedProfile, conversationId));
     });
 
     // Real-time incoming messages
     // Backend emits: { type: 'message:received', message: savedMessage, conversation }
     socket.on('message', (data: any) => {
-      console.log('[WS] message received:', data);
       const msg = data.message || data;
       const msgProfileId = msg.profileId || data.profileId;
       const msgDirection = msg.direction || data.direction;
       
       if (msgProfileId === selectedProfile && msgDirection === 'incoming') {
+        if (msg.conversationId !== selectedConversationRef.current?.id) {
+          loadConversations();
+          return;
+        }
         setMessages(prev => {
-          // Avoid duplicates
-          if (prev.some(m => m.id === msg.id || (m.messageId && msg.messageId && m.messageId === msg.messageId))) return prev;
-          return [...prev, msg as Message];
+          const update = (timeline: Message[]) => {
+            // Avoid duplicates
+            if (timeline.some(m => m.id === msg.id || (m.messageId && msg.messageId && m.messageId === msg.messageId))) return timeline;
+            return foldReactionMessages([...timeline, msg as Message]);
+          };
+          const updated = applyLiveTimelineUpdate(preSearchMessagesRef.current, prev, update);
+          preSearchMessagesRef.current = updated.canonical;
+          return updated.visible;
         });
         // Refresh conversations to update last message
         loadConversations().then(() => {
@@ -331,20 +576,77 @@ export default function ChatPage() {
   }, [selectedProfile]);
 
   useEffect(() => {
+    setPresenceRecords({});
+    const interval = setInterval(() => {
+      setPresenceRecords(current => expireTransientPresence(current));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [selectedProfile, selectedConversation?.id]);
+
+  useEffect(() => () => {
+    const clearRemoteTyping = shouldSendTypingStop(lastTypingSentRef.current, Boolean(typingStopTimeoutRef.current));
+    if (typingStopTimeoutRef.current) {
+      clearTimeout(typingStopTimeoutRef.current);
+      typingStopTimeoutRef.current = null;
+    }
+    lastTypingSentRef.current = 0;
+    if (clearRemoteTyping && selectedProfile && selectedConversation) {
+      api.sendTyping({ profileId: selectedProfile, to: selectedConversation.jid, state: 'available' }).catch(() => {});
+    }
+  }, [selectedProfile, selectedConversation?.id]);
+
+  useEffect(() => {
     if (selectedProfile) {
       setConversations([]);
       setSelectedConversation(null);
       setMessages([]);
+      setShowNewChat(false);
+      setNewChatContacts([]);
+      setNewChatQuery('');
+      setNewChatError(null);
+      setHasMoreMessages(false);
       loadConversations(true);
     }
   }, [selectedProfile]);
 
   useEffect(() => {
+    selectedConversationRef.current = selectedConversation;
     if (selectedConversation) {
+      if (materializedConversationIdRef.current === selectedConversation.id) {
+        materializedConversationIdRef.current = null;
+        return;
+      }
+      longPressControllerRef.current?.cancel();
+      setFocusedMessageId(null);
+      setActionSheetMessage(null);
+      setActiveMessageMenu(null);
+      setReactionPickerMessage(null);
+      setShowDeleteConfirm(null);
+      setReplyTo(null);
+      setShowMessageSearch(false);
+      setMessageSearchQuery('');
+      setRemoteMessageSearchMatches([]);
+      setMessageSearchError(null);
+      messageSearchRequestRef.current += 1;
+      messageContextRequestRef.current += 1;
+      preSearchMessagesRef.current = null;
+      setPendingAttachment(null);
+      setAttachmentCaption('');
+      setAttachmentError(null);
+      setAttachmentTempMessageId(null);
       setMessages([]);
-      loadMessages(selectedConversation.id);
+      setHasMoreMessages(false);
+      setOlderMessagesLoading(false);
+      setIsAtBottom(true);
+      setNewMessagesBelow(0);
+      previousLastMessageIdRef.current = null;
+      if (selectedConversation.id.startsWith('draft:')) {
+        setMessagesLoading(false);
+      } else {
+        loadMessages(selectedConversation.id);
+      }
       // Mark as read when opening a conversation
-      if (selectedConversation.unreadCount > 0) {
+      if (!selectedConversation.id.startsWith('draft:') && selectedConversation.unreadCount > 0) {
         api.markAsRead(selectedConversation.id).catch(() => {});
         // Clear unread badge in local state
         setConversations(prev => prev.map(c =>
@@ -356,11 +658,25 @@ export default function ChatPage() {
   }, [selectedConversation?.id]);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    const container = messagesContainerRef.current;
+    const nearBottom = !container || container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+    const lastMessageId = messages[messages.length - 1]?.id || null;
+    const appendedAtTail = Boolean(previousLastMessageIdRef.current && lastMessageId && previousLastMessageIdRef.current !== lastMessageId);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!previousLastMessageIdRef.current || nearBottom || messagesLoading) {
+      scrollToBottom(messagesLoading ? 'auto' : 'smooth');
+      setIsAtBottom(true);
+      setNewMessagesBelow(0);
+    } else if (appendedAtTail) {
+      setNewMessagesBelow(count => count + 1);
+    }
+    previousLastMessageIdRef.current = lastMessageId;
+  }, [messages, messagesLoading]);
+
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+    messagesEndRef.current?.scrollIntoView({ behavior });
+    setIsAtBottom(true);
+    setNewMessagesBelow(0);
   };
 
   const loadProfiles = async () => {
@@ -430,13 +746,14 @@ export default function ChatPage() {
     setMessagesLoading(true);
     setMessagesError(null);
     try {
-      const res = await api.getMessages(conversationId);
+      const res = await api.getMessages(conversationId, { limit: MESSAGE_PAGE_SIZE });
       if (requestId !== messageRequestRef.current) return;
       if (res.data) {
         // API returns { messages: [...], hasMore } or possibly an array
         const raw = res.data as any;
         const msgArray = Array.isArray(raw) ? raw : (raw.messages || []);
-        setMessages(msgArray);
+        setMessages(foldReactionMessages(msgArray));
+        setHasMoreMessages(Array.isArray(raw) ? msgArray.length === MESSAGE_PAGE_SIZE : Boolean(raw.hasMore));
       } else {
         setMessagesError('Could not load messages.');
       }
@@ -448,6 +765,44 @@ export default function ChatPage() {
       if (requestId === messageRequestRef.current) {
         setMessagesLoading(false);
       }
+    }
+  };
+
+  const loadOlderMessages = async () => {
+    if (!selectedConversation || !hasMoreMessages || olderMessagesRequestRef.current || messages.length === 0) return;
+
+    const timeline = messagesContainerRef.current;
+    const oldestMessage = messages[0];
+    const requestId = messageRequestRef.current;
+    const previousScrollHeight = timeline?.scrollHeight || 0;
+    olderMessagesRequestRef.current = true;
+    setOlderMessagesLoading(true);
+
+    try {
+      const res = await api.getMessages(selectedConversation.id, {
+        limit: MESSAGE_PAGE_SIZE,
+        before: oldestMessage.id,
+      });
+      if (requestId !== messageRequestRef.current || !res.data) return;
+
+      const raw = res.data as any;
+      const older = Array.isArray(raw) ? raw : (raw.messages || []);
+      setHasMoreMessages(Array.isArray(raw) ? older.length === MESSAGE_PAGE_SIZE : Boolean(raw.hasMore));
+      setMessages(current => {
+        const currentIds = new Set(current.map(message => message.id));
+        const uniqueOlder = older.filter((message: Message) => !currentIds.has(message.id));
+        return foldReactionMessages([...uniqueOlder, ...current]);
+      });
+
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const currentTimeline = messagesContainerRef.current;
+        if (currentTimeline) currentTimeline.scrollTop = currentTimeline.scrollHeight - previousScrollHeight;
+      }));
+    } catch {
+      toast({ title: 'Could not load older messages', variant: 'destructive' });
+    } finally {
+      olderMessagesRequestRef.current = false;
+      if (requestId === messageRequestRef.current) setOlderMessagesLoading(false);
     }
   };
 
@@ -464,35 +819,59 @@ export default function ChatPage() {
       direction: 'outgoing',
       status: 'pending',
       timestamp: new Date().toISOString(),
+      quotedMessageId: replyTo?.id,
     };
 
     // Optimistic update
     setMessages(prev => [...prev, tempMessage]);
+    requestAnimationFrame(() => scrollToBottom());
     const messageText = messageInput;
+    const quotedMessage = replyTo;
     setMessageInput('');
+    setReplyTo(null);
+    if (typingStopTimeoutRef.current) {
+      clearTimeout(typingStopTimeoutRef.current);
+      typingStopTimeoutRef.current = null;
+    }
 
     try {
-      // Send typing indicator before the message (non-blocking)
+      // Briefly show the recipient a typing indicator before sending.
       api.sendTyping({
         profileId: selectedProfile,
         to: selectedConversation.jid,
         duration: 2000,
-      }).catch(() => {}); // fire-and-forget
+      }).catch(() => {});
 
-      // Wait a short moment for typing to appear, then send
       await new Promise(resolve => setTimeout(resolve, 1500));
 
-      const res = await api.sendMessage({
-        profileId: selectedProfile,
-        to: selectedConversation.jid,
-        text: messageText,
-      });
+      const res = quotedMessage
+        ? await api.sendReply({
+            profileId: selectedProfile,
+            quotedMessageId: quotedMessage.id,
+            text: messageText,
+          })
+        : await api.sendMessage({
+            profileId: selectedProfile,
+            to: selectedConversation.jid,
+            text: messageText,
+          });
 
       if (res.data) {
         // Update message with real data including WhatsApp messageId for ack matching
         setMessages(prev => prev.map(m => 
-          m.id === tempId ? { ...m, id: res.data.messageId || tempId, messageId: res.data.waMessageId, status: 'sent' } : m
+          m.id === tempId ? { ...m, id: res.data.messageId || tempId, conversationId: res.data.conversationId || m.conversationId, messageId: res.data.waMessageId, status: 'sent' } : m
         ));
+        if (selectedConversation.id.startsWith('draft:') && res.data.conversationId) {
+          const materialized: Conversation = {
+            ...selectedConversation,
+            id: res.data.conversationId,
+            lastMessageAt: new Date().toISOString(),
+            lastMessage: { type: 'text', content: { text: messageText }, timestamp: new Date().toISOString(), status: 'sent', direction: 'outgoing' },
+          };
+          materializedConversationIdRef.current = materialized.id;
+          setConversations(current => [materialized, ...current.filter(conversation => conversation.id !== materialized.id)]);
+          setSelectedConversation(materialized);
+        }
       } else {
         setMessages(prev => prev.map(m => 
           m.id === tempId ? { ...m, status: 'failed' } : m
@@ -505,69 +884,136 @@ export default function ChatPage() {
       ));
       toast({ title: 'Failed to send message', variant: 'destructive' });
     }
+    api.sendTyping({ profileId: selectedProfile, to: selectedConversation.jid, state: 'available' }).catch(() => {});
+    lastTypingSentRef.current = 0;
     setSending(false);
   };
 
-  // Handle file attachment upload and send
-  const handleFileUpload = async (file: File) => {
-    if (!selectedConversation || !selectedProfile) return;
+  const handleRetryMessage = async (message: Message) => {
+    if (!selectedConversation || message.status !== 'failed' || retryingMessageRef.current) return;
 
-    const mimeType = file.type;
-    let msgType = 'document';
-    if (mimeType.startsWith('image/')) msgType = 'image';
-    else if (mimeType.startsWith('video/')) msgType = 'video';
-    else if (mimeType.startsWith('audio/')) msgType = 'audio';
-
-    // Optimistic message
-    const tempId = `temp-${Date.now()}`;
-    const tempMessage: Message = {
-      id: tempId,
-      conversationId: selectedConversation.id,
-      content: { text: `📎 Sending ${file.name}...`, filename: file.name },
-      type: msgType,
-      direction: 'outgoing',
-      status: 'pending',
-      timestamp: new Date().toISOString(),
-    };
-    setMessages(prev => [...prev, tempMessage]);
+    retryingMessageRef.current = message.id;
+    setRetryingMessageId(message.id);
+    setMessages(current => current.map(item => item.id === message.id ? { ...item, status: 'pending' } : item));
 
     try {
-      // 1. Upload file to get URL
+      api.sendTyping({ profileId: selectedProfile, to: selectedConversation.jid, duration: 2000 }).catch(() => {});
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      const text = message.content?.text || message.content?.caption || '';
+      const res = message.quotedMessageId
+        ? await api.sendReply({ profileId: selectedProfile, quotedMessageId: message.quotedMessageId, text })
+        : await api.sendMessage({ profileId: selectedProfile, to: selectedConversation.jid, text });
+
+      if (!res.data) throw new Error('Retry failed');
+      setMessages(current => current.map(item => item.id === message.id
+        ? { ...item, id: res.data.messageId || item.id, messageId: res.data.waMessageId, status: 'sent' }
+        : item));
+    } catch {
+      setMessages(current => current.map(item => item.id === message.id ? { ...item, status: 'failed' } : item));
+      toast({ title: 'Retry failed', description: 'The message was not sent. Try again when the connection is restored.', variant: 'destructive' });
+    } finally {
+      retryingMessageRef.current = null;
+      setRetryingMessageId(null);
+    }
+  };
+
+  const clearAttachmentPreview = () => {
+    setPendingAttachment(null);
+    setAttachmentCaption('');
+    setAttachmentError(null);
+    setAttachmentTempMessageId(null);
+    if (attachRef.current) attachRef.current.value = '';
+  };
+
+  const handleAttachmentSelected = (file: File) => {
+    const allowedMimes = new Set([
+      'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+      'video/mp4', 'video/quicktime', 'video/webm',
+      'audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/webm',
+      'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'text/plain', 'application/zip',
+    ]);
+    if (!allowedMimes.has(file.type)) {
+      toast({ title: 'Unsupported file type', description: 'Choose an image, video, audio file, PDF, Office document, text file, or ZIP archive.', variant: 'destructive' });
+      return;
+    }
+
+    const type: PendingAttachment['type'] = file.type.startsWith('image/') ? 'image'
+      : file.type.startsWith('video/') ? 'video'
+      : file.type.startsWith('audio/') ? 'audio'
+      : 'document';
+    const maxSize = type === 'document' ? 20 * 1024 * 1024 : 16 * 1024 * 1024;
+    if (file.size > maxSize) {
+      toast({ title: 'File is too large', description: `${type === 'document' ? 'Documents' : 'Media'} must be ${maxSize / (1024 * 1024)} MB or smaller.`, variant: 'destructive' });
+      return;
+    }
+
+    setPendingAttachment({ file, objectUrl: URL.createObjectURL(file), type });
+    setAttachmentCaption('');
+    setAttachmentError(null);
+    setAttachmentTempMessageId(null);
+    setShowAttachMenu(false);
+  };
+
+  const handleAttachmentSend = async () => {
+    if (!pendingAttachment || !selectedConversation || !selectedProfile || attachmentSending) return;
+
+    const { file, type, objectUrl } = pendingAttachment;
+    const tempId = attachmentTempMessageId || `temp-attachment-${Date.now()}`;
+    const caption = attachmentCaption.trim();
+    const optimisticContent = { url: objectUrl, caption: caption || undefined, filename: file.name, mimetype: file.type };
+    if (!attachmentTempMessageId) {
+      setAttachmentTempMessageId(tempId);
+      setMessages(current => [...current, {
+        id: tempId,
+        conversationId: selectedConversation.id,
+        content: optimisticContent,
+        type,
+        direction: 'outgoing',
+        status: 'pending',
+        timestamp: new Date().toISOString(),
+      }]);
+    } else {
+      setMessages(current => current.map(message => message.id === tempId ? { ...message, status: 'pending', content: optimisticContent } : message));
+    }
+    setAttachmentSending(true);
+    setAttachmentError(null);
+    requestAnimationFrame(() => scrollToBottom());
+
+    try {
       const uploadRes = await api.uploadMedia(file);
       const mediaUrl = uploadRes.data?.url;
-      if (!mediaUrl) throw new Error('Upload failed - no URL returned');
+      if (!mediaUrl) throw new Error(uploadRes.error || 'Upload failed');
 
-      // 2. Send message using appropriate endpoint
-      const to = selectedConversation.jid;
-      let res: any;
-      switch (msgType) {
-        case 'image':
-          res = await api.sendImageMessage({ profileId: selectedProfile, to, url: mediaUrl, mimetype: mimeType });
-          break;
-        case 'video':
-          res = await api.sendVideoMessage({ profileId: selectedProfile, to, url: mediaUrl, mimetype: mimeType });
-          break;
-        case 'audio':
-          res = await api.sendAudioMessage({ profileId: selectedProfile, to, url: mediaUrl, mimetype: mimeType });
-          break;
-        default:
-          res = await api.sendDocumentMessage({ profileId: selectedProfile, to, url: mediaUrl, filename: file.name, mimetype: mimeType });
-          break;
-      }
+      const common = { profileId: selectedProfile, to: selectedConversation.jid, url: mediaUrl, mimetype: file.type };
+      const res = type === 'image'
+        ? await api.sendImageMessage({ ...common, caption: caption || undefined })
+        : type === 'video'
+          ? await api.sendVideoMessage({ ...common, caption: caption || undefined })
+          : type === 'audio'
+            ? await api.sendAudioMessage(common)
+            : await api.sendDocumentMessage({ ...common, filename: file.name, caption: caption || undefined });
+      if (!res.data) throw new Error(res.error || 'Send failed');
 
-      if (res.data) {
-        setMessages(prev => prev.map(m =>
-          m.id === tempId ? { ...m, id: res.data.id, status: 'sent', content: { ...m.content, url: mediaUrl, text: undefined } } : m
-        ));
-        toast({ title: `${msgType.charAt(0).toUpperCase() + msgType.slice(1)} sent` });
-      } else {
-        throw new Error('Send failed');
-      }
+      setMessages(current => current.map(message => message.id === tempId ? {
+        ...message,
+        id: res.data.id || res.data.messageId || tempId,
+        messageId: res.data.waMessageId || res.data.messageId,
+        status: 'sent',
+        content: { ...optimisticContent, url: mediaUrl },
+      } : message));
+      toast({ title: `${type.charAt(0).toUpperCase() + type.slice(1)} sent` });
+      clearAttachmentPreview();
     } catch (error) {
-      setMessages(prev => prev.map(m =>
-        m.id === tempId ? { ...m, status: 'failed', content: { text: `❌ Failed to send ${file.name}` } } : m
-      ));
-      toast({ title: `Failed to send ${file.name}`, variant: 'destructive' });
+      const description = error instanceof Error ? error.message : 'Upload failed';
+      setMessages(current => current.map(message => message.id === tempId ? { ...message, status: 'failed' } : message));
+      setAttachmentError(description);
+      toast({ title: `Failed to send ${file.name}`, description, variant: 'destructive' });
+    } finally {
+      setAttachmentSending(false);
     }
   };
 
@@ -623,6 +1069,218 @@ export default function ChatPage() {
     inputRef.current?.focus();
   };
 
+  const handleReaction = async (message: Message, emoji: string) => {
+    const previousReactions = message.reactions || [];
+    setReactionPickerMessage(null);
+    setActiveMessageMenu(null);
+    setMessages(prev => prev.map(item =>
+      item.id === message.id ? { ...item, reactions: [...previousReactions, emoji] } : item
+    ));
+
+    try {
+      const res = await api.sendReaction({ profileId: selectedProfile, messageId: message.id, emoji });
+      if (!res.data) throw new Error(res.error || 'Reaction failed');
+    } catch {
+      setMessages(prev => prev.map(item =>
+        item.id === message.id ? { ...item, reactions: previousReactions } : item
+      ));
+      toast({ title: 'Failed to send reaction', variant: 'destructive' });
+    }
+  };
+
+  const handleCopyMessage = async (message: Message) => {
+    const text = message.content?.text || message.content?.caption;
+    setActiveMessageMenu(null);
+    if (!text) {
+      toast({ title: 'This message has no text to copy', variant: 'destructive' });
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ title: 'Message copied' });
+    } catch {
+      toast({ title: 'Could not copy message', variant: 'destructive' });
+    }
+  };
+
+  const goToNextSearchResult = async () => {
+    if (currentSearchIndex < messageSearchMatches.length - 1) {
+      setCurrentSearchIndex(index => index + 1);
+      return;
+    }
+    if (!messageSearchHasMore || !messageSearchNextCursor || !selectedConversation || !selectedProfile || messageSearchLoading) return;
+
+    const requestId = ++messageSearchRequestRef.current;
+    const conversationId = selectedConversation.id;
+    const nextIndex = messageSearchMatches.length;
+    setMessageSearchLoading(true);
+    setMessageSearchError(null);
+    try {
+      const response = await api.searchConversationMessages(conversationId, selectedProfile, messageSearchQuery.trim(), { limit: 30, cursor: messageSearchNextCursor });
+      if (requestId !== messageSearchRequestRef.current || selectedConversationRef.current?.id !== conversationId) return;
+      if (!response.data) throw new Error(response.error || 'Could not load more search results');
+      setRemoteMessageSearchMatches(current => [...current, ...(response.data?.messages || [])]);
+      setMessageSearchHasMore(response.data.hasMore);
+      setMessageSearchNextCursor(response.data.nextCursor);
+      if (response.data.messages.length > 0) setCurrentSearchIndex(nextIndex);
+    } catch (error) {
+      if (requestId === messageSearchRequestRef.current) setMessageSearchError(error instanceof Error ? error.message : 'Could not load more search results');
+    } finally {
+      if (requestId === messageSearchRequestRef.current) setMessageSearchLoading(false);
+    }
+  };
+
+  const closeMessageSearch = () => {
+    messageSearchRequestRef.current += 1;
+    messageContextRequestRef.current += 1;
+    if (preSearchMessagesRef.current) {
+      setMessages(preSearchMessagesRef.current);
+      preSearchMessagesRef.current = null;
+    }
+    setShowMessageSearch(false);
+    setMessageSearchQuery('');
+    setRemoteMessageSearchMatches([]);
+    setMessageSearchHasMore(false);
+    setMessageSearchNextCursor(null);
+    setMessageSearchError(null);
+    setMessageSearchLoading(false);
+    setCurrentSearchIndex(0);
+  };
+
+  const focusMessageAt = (index: number) => {
+    const message = messages[index];
+    if (!message) return;
+    setFocusedMessageId(message.id);
+    requestAnimationFrame(() => messageElementRefs.current.get(message.id)?.focus());
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const focusedMessage = messages.find(message => message.id === focusedMessageId);
+      const action = resolveChatShortcut(event, Boolean(focusedMessage), inputRef.current);
+      if (!action) return;
+      event.preventDefault();
+
+      if (action === 'open-message-search') {
+        if (!selectedConversation || pendingAttachment) return;
+        setShowMessageSearch(true);
+        setTimeout(() => messageSearchInputRef.current?.focus(), 0);
+      } else if (action === 'focus-conversation-search') {
+        conversationSearchRef.current?.focus();
+      } else if (action === 'send-message') {
+        handleSend();
+      } else if (action === 'previous-search-result' && showMessageSearch) {
+        setCurrentSearchIndex(index => Math.max(0, index - 1));
+      } else if (action === 'next-search-result' && showMessageSearch) {
+        goToNextSearchResult();
+      } else if (action === 'reply-focused' && focusedMessage) {
+        setReplyTo(focusedMessage);
+        inputRef.current?.focus();
+      } else if (action === 'copy-focused' && focusedMessage) {
+        handleCopyMessage(focusedMessage);
+      } else if (action === 'delete-focused' && focusedMessage?.direction === 'outgoing') {
+        setShowDeleteConfirm(focusedMessage.messageId || focusedMessage.id);
+      } else if (action === 'escape') {
+        if (actionSheetMessage) setActionSheetMessage(null);
+        else if (pendingAttachment && !attachmentSending) clearAttachmentPreview();
+        else if (reactionPickerMessage) setReactionPickerMessage(null);
+        else if (activeMessageMenu) setActiveMessageMenu(null);
+        else if (showDeleteConfirm) setShowDeleteConfirm(null);
+        else if (showMessageSearch) closeMessageSearch();
+        else if (showEmojiPicker) setShowEmojiPicker(false);
+        else if (showAttachMenu) setShowAttachMenu(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeMessageMenu, actionSheetMessage, attachmentSending, currentSearchIndex, focusedMessageId, messageSearchHasMore, messageSearchLoading, messageSearchMatches.length, messageSearchNextCursor, messageSearchQuery, messages, pendingAttachment, reactionPickerMessage, selectedConversation, selectedProfile, showAttachMenu, showDeleteConfirm, showEmojiPicker, showMessageSearch]);
+
+  const openNewChatPanel = async () => {
+    if (!selectedProfile || newChatLoading) return;
+    setShowNewChat(true);
+    setNewChatQuery('');
+    setNewChatError(null);
+    setNewChatLoading(true);
+    try {
+      const res = await api.getContacts(selectedProfile);
+      if (!res.data) throw new Error(res.error || 'Could not load contacts');
+      setNewChatContacts(res.data);
+    } catch (error) {
+      setNewChatError(error instanceof Error ? error.message : 'Could not load contacts');
+    } finally {
+      setNewChatLoading(false);
+    }
+  };
+
+  const startChatWithPhone = async (phoneInput: string, name?: string, contactId?: string) => {
+    if (!selectedProfile || startingNewChatRef.current) return;
+    const phone = normalizeNewChatPhone(phoneInput);
+    if (!isValidInternationalPhone(phone)) {
+      setNewChatError('Enter a valid international phone number');
+      return;
+    }
+
+    const existing = conversations.find(conversation =>
+      conversation.profileId === selectedProfile && canonicalConversationPhone(conversation.jid) === phone
+    );
+    if (existing) {
+      messageRequestRef.current += 1;
+      setSelectedConversation(existing);
+      setShowNewChat(false);
+      return;
+    }
+
+    const activeProfile = profiles.find(profile => profile.id === selectedProfile);
+    if (activeProfile?.status !== 'connected') {
+      setNewChatError('Connect this WhatsApp profile before starting a new chat');
+      return;
+    }
+
+    startingNewChatRef.current = true;
+    setStartingNewChat(true);
+    setNewChatError(null);
+    try {
+      const validation = await api.validateContactPhone(selectedProfile, phone);
+      if (!validation.data?.validFormat) throw new Error(validation.error || 'Enter a valid international phone number');
+      if (validation.data.onWhatsApp === false) throw new Error('This number is not available on WhatsApp');
+
+      const jid = `${validation.data.phone || phone}@s.whatsapp.net`;
+      const draft: Conversation = {
+        id: `draft:${selectedProfile}:${phone}`,
+        profileId: selectedProfile,
+        jid,
+        contactId: contactId || `phone:${phone}`,
+        contactName: name || `+${phone}`,
+        name: name || `+${phone}`,
+        type: 'user',
+        unreadCount: 0,
+        lastMessageAt: '',
+      };
+      messageRequestRef.current += 1;
+      setSelectedConversation(draft);
+      setShowNewChat(false);
+      setNewChatQuery('');
+    } catch (error) {
+      setNewChatError(error instanceof Error ? error.message : 'Could not start chat');
+    } finally {
+      startingNewChatRef.current = false;
+      setStartingNewChat(false);
+    }
+  };
+
+  const normalizedDirectPhone = normalizeNewChatPhone(newChatQuery);
+  const queryLooksLikePhone = newChatQuery.trim().length > 0 && /^[+()\d\s-]+$/.test(newChatQuery.trim());
+  const directPhoneIsValid = queryLooksLikePhone && isValidInternationalPhone(normalizedDirectPhone);
+  const filteredNewChatContacts = newChatContacts.filter(contact => {
+    const query = newChatQuery.trim().toLowerCase();
+    if (!query) return true;
+    const normalizedQuery = normalizeNewChatPhone(query);
+    const email = String(contact.metadata?.email || '').toLowerCase();
+    return contact.name?.toLowerCase().includes(query)
+      || (normalizedQuery.length > 0 && contact.phone.includes(normalizedQuery))
+      || email.includes(query);
+  });
+
   // Filter and sort conversations (pinned first)
   const filteredConversations = conversations
     .filter(conv => {
@@ -641,6 +1299,7 @@ export default function ChatPage() {
       if (aPinned !== bPinned) return bPinned - aPinned;
       return 0; // keep original order for un-pinned
     });
+  const { items: visibleConversations, hiddenCount: hiddenConversationCount } = getVisibleWindow(filteredConversations, 250);
 
   // Get initials for avatar
   const getInitials = (name: string) => {
@@ -703,8 +1362,8 @@ export default function ChatPage() {
   // Render loading skeleton
   if (loading) {
     return (
-      <div className="h-[calc(100vh-120px)] flex">
-        <div className="w-96 border-r border-border p-4 space-y-4">
+      <div className="h-[calc(100dvh-112px)] min-h-[560px] flex">
+        <div className="w-full md:w-[360px] border-r border-border p-4 space-y-4">
           <Skeleton className="h-10 w-full" />
           {[1, 2, 3, 4, 5].map(i => (
             <Skeleton key={i} className="h-16 w-full" />
@@ -718,11 +1377,11 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="h-[calc(100vh-120px)] flex bg-card rounded-2xl border border-border overflow-hidden">
+    <div className="h-[calc(100dvh-112px)] min-h-[560px] flex bg-[#f7f8fa] dark:bg-[#111b21] border border-border overflow-hidden shadow-sm">
       {/* Conversation Sidebar */}
-      <div className="w-96 border-r border-border flex flex-col">
+      <div className={`${selectedConversation ? 'hidden md:flex' : 'flex'} w-full md:w-[360px] lg:w-[400px] shrink-0 border-r border-[#e9edef] dark:border-[#2a3942] flex-col bg-white dark:bg-[#111b21]`}>
         {/* Sidebar Header */}
-        <div className="p-4 border-b border-border bg-secondary/30">
+        <div className="px-3 py-2.5 border-b border-[#e9edef] dark:border-[#2a3942] bg-[#f0f2f5] dark:bg-[#202c33]">
           <Select
             value={selectedProfile}
             onValueChange={(profileId) => {
@@ -732,7 +1391,7 @@ export default function ChatPage() {
               setSelectedProfile(profileId);
             }}
           >
-            <SelectTrigger className="w-full mb-3">
+            <SelectTrigger className="w-full h-9 mb-2 border-0 bg-white/90 dark:bg-[#2a3942] shadow-none">
               <SelectValue placeholder="Select profile" />
             </SelectTrigger>
             <SelectContent>
@@ -747,22 +1406,66 @@ export default function ChatPage() {
             </SelectContent>
           </Select>
 
-          <div className="relative">
-            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <Input
-              placeholder="Search or start new chat"
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="pl-10"
-            />
+          <div className="flex gap-2">
+            <div className="relative min-w-0 flex-1">
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <Input
+                ref={conversationSearchRef}
+                placeholder="Search conversations"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="h-9 pl-10 border-0 rounded-lg bg-white dark:bg-[#202c33] shadow-none focus-visible:ring-1"
+              />
+            </div>
+            <Button type="button" variant="ghost" size="sm" onClick={openNewChatPanel} className="h-9 w-9 shrink-0 rounded-full bg-white p-0 text-[#008069] dark:bg-[#202c33] dark:text-[#00a884]" aria-label="New chat">
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h8m-4-4v8m8-2a8 8 0 11-3.5-6.6L20 4v5h-5l1.8-1.8" /></svg>
+            </Button>
           </div>
         </div>
 
         {/* Conversation List */}
         <div className="flex-1 overflow-y-auto">
-          {conversationsLoading ? (
+          {showNewChat ? (
+            <div className="min-h-full bg-white dark:bg-[#111b21]">
+              <div className="flex h-14 items-center gap-3 border-b border-[#e9edef] px-3 dark:border-[#202c33]">
+                <Button variant="ghost" size="sm" className="h-9 w-9 p-0" onClick={() => { setShowNewChat(false); setNewChatError(null); }} aria-label="Back to conversations">
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                </Button>
+                <h2 className="text-base font-semibold">New chat</h2>
+              </div>
+              <div className="p-3">
+                <div className="relative">
+                  <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35m1.35-5.65a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                  <Input autoFocus placeholder="Search contacts or enter phone number" value={newChatQuery} onChange={event => { setNewChatQuery(event.target.value); setNewChatError(null); }} onKeyDown={event => { if (event.key === 'Enter' && directPhoneIsValid) { event.preventDefault(); startChatWithPhone(normalizedDirectPhone); } }} className="h-10 rounded-lg border-0 bg-[#f0f2f5] pl-9 shadow-none focus-visible:ring-1 dark:bg-[#202c33]" />
+                </div>
+                {queryLooksLikePhone && !directPhoneIsValid && (
+                  <p className="mt-2 text-xs text-red-500">Enter a valid international phone number</p>
+                )}
+                {newChatError && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-950/30 dark:text-red-300" role="alert">{newChatError}</p>}
+              </div>
+
+              {directPhoneIsValid && (
+                <button type="button" onClick={() => startChatWithPhone(normalizedDirectPhone)} disabled={startingNewChat} aria-label={`Start chat with +${normalizedDirectPhone}`} className="flex w-full items-center gap-3 border-y border-[#e9edef] px-4 py-3 text-left hover:bg-[#f5f6f6] disabled:opacity-60 dark:border-[#202c33] dark:hover:bg-[#202c33]">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-full bg-[#00a884] text-xl text-white">+</span>
+                  <span><span className="block text-sm font-medium">Chat with +{normalizedDirectPhone}</span><span className="block text-xs text-muted-foreground">New WhatsApp number</span></span>
+                </button>
+              )}
+
+              <p className="px-4 pb-2 pt-4 text-xs font-semibold uppercase tracking-wide text-[#008069] dark:text-[#00a884]">Contacts</p>
+              {newChatLoading ? (
+                <div className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground" role="status"><span className="h-4 w-4 animate-spin rounded-full border-2 border-[#00a884] border-t-transparent" />Loading contacts…</div>
+              ) : filteredNewChatContacts.length === 0 ? (
+                <p className="p-8 text-center text-sm text-muted-foreground">No matching contacts</p>
+              ) : filteredNewChatContacts.map(contact => (
+                <button key={contact.id} type="button" onClick={() => startChatWithPhone(contact.phone, contact.name, contact.id)} disabled={startingNewChat} className="flex w-full items-center gap-3 border-b border-[#f0f2f5] px-4 py-3 text-left hover:bg-[#f5f6f6] disabled:opacity-60 dark:border-[#202c33] dark:hover:bg-[#202c33]">
+                  <Avatar className="h-11 w-11"><AvatarFallback className="bg-[#25D366] text-white">{getInitials(contact.name || contact.phone)}</AvatarFallback></Avatar>
+                  <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{contact.name || `+${contact.phone}`}</span><span className="block truncate text-xs text-muted-foreground">+{contact.phone}</span></span>
+                </button>
+              ))}
+            </div>
+          ) : conversationsLoading ? (
             <div className="p-4 space-y-3" role="status" aria-live="polite">
               <div className="flex items-center gap-2 px-1 text-sm text-muted-foreground">
                 <span className="h-4 w-4 rounded-full border-2 border-[#25D366] border-t-transparent animate-spin" />
@@ -792,7 +1495,8 @@ export default function ChatPage() {
               <p className="text-sm text-muted-foreground">No conversations yet</p>
             </div>
           ) : (
-            filteredConversations.map(conv => (
+            <>
+            {visibleConversations.map(conv => (
               <div
                 key={conv.id}
                 onClick={() => {
@@ -801,8 +1505,8 @@ export default function ChatPage() {
                     setSelectedConversation(conv);
                   }
                 }}
-                className={`flex items-center gap-3 p-4 cursor-pointer hover:bg-secondary/50 transition-colors border-b border-border ${
-                  selectedConversation?.id === conv.id ? 'bg-secondary' : ''
+                className={`flex items-center gap-3 px-3 py-3 cursor-pointer hover:bg-[#f5f6f6] dark:hover:bg-[#202c33] transition-colors border-b border-[#f0f2f5] dark:border-[#202c33] ${
+                  selectedConversation?.id === conv.id ? 'bg-[#f0f2f5] dark:bg-[#2a3942]' : ''
                 }`}
               >
                 <Avatar className="w-12 h-12">
@@ -827,40 +1531,58 @@ export default function ChatPage() {
                       {getLastMessagePreview(conv.lastMessage)}
                     </p>
                     {conv.unreadCount > 0 && (
-                      <Badge className="bg-[#25D366] text-white text-xs ml-2">
+                      <Badge className="min-w-5 h-5 justify-center rounded-full bg-[#25D366] text-white text-[11px] px-1.5 ml-2">
                         {conv.unreadCount}
                       </Badge>
                     )}
                   </div>
                 </div>
               </div>
-            ))
+            ))}
+            {hiddenConversationCount > 0 && (
+              <div className="border-t border-[#e9edef] px-4 py-3 text-center text-xs text-muted-foreground dark:border-[#202c33]">
+                {hiddenConversationCount.toLocaleString()} older conversations hidden. Search above to find them.
+              </div>
+            )}
+            </>
           )}
         </div>
       </div>
 
       {/* Chat Area */}
-      <div className="flex-1 flex flex-col">
+      <div className={`${selectedConversation ? 'flex' : 'hidden md:flex'} relative min-w-0 flex-1 flex-col bg-[#efeae2] dark:bg-[#0b141a]`}>
         {selectedConversation ? (
           <>
             {/* Chat Header */}
-            <div className="p-4 border-b border-border bg-secondary/30 flex items-center gap-4">
+            <div className="h-[60px] px-3 md:px-4 border-b border-[#d8dcdf] dark:border-[#2a3942] bg-[#f0f2f5] dark:bg-[#202c33] flex items-center gap-3">
+              <Button variant="ghost" size="sm" className="md:hidden h-9 w-9 p-0 text-muted-foreground" onClick={() => { setSelectedConversation(null); setMessages([]); }} aria-label="Back to conversations">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+              </Button>
               <Avatar className="w-10 h-10">
                 <AvatarImage src={selectedConversation.avatar} />
                 <AvatarFallback className="bg-[#25D366] text-white">
                   {getInitials(getDisplayName(selectedConversation))}
                 </AvatarFallback>
               </Avatar>
-              <div className="flex-1">
-                <h3 className="font-semibold text-foreground">
+              <div className="min-w-0 flex-1">
+                <h3 className="truncate font-semibold text-foreground">
                   {getDisplayName(selectedConversation)}
                 </h3>
-                {getConversationSubtitle(selectedConversation) && (
-                  <p className="text-xs text-muted-foreground">
-                    {getConversationSubtitle(selectedConversation)}
+                {conversationSubtitle && (
+                  <p className={`truncate text-xs ${presenceLabel ? 'text-[#008069] dark:text-[#06cf9c]' : 'text-muted-foreground'}`} aria-live="polite" data-presence-state={presenceLabel || undefined}>
+                    {conversationSubtitle}
                   </p>
                 )}
               </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowMessageSearch(true)}
+                aria-label="Search messages"
+                className="h-9 w-9 p-0 text-muted-foreground"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35m1.35-5.65a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+              </Button>
               <div className="relative">
                 <Button variant="ghost" size="sm" onClick={() => setShowThreeDotMenu(!showThreeDotMenu)}>
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -889,11 +1611,56 @@ export default function ChatPage() {
               </div>
             </div>
 
+            {showMessageSearch && (
+              <div className="flex h-12 items-center gap-2 border-b border-[#d8dcdf] bg-white px-3 dark:border-[#2a3942] dark:bg-[#202c33]">
+                <div className="relative min-w-0 flex-1">
+                  <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35m1.35-5.65a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                  <Input ref={messageSearchInputRef} autoFocus placeholder="Search messages" value={messageSearchQuery} onChange={event => setMessageSearchQuery(event.target.value)} className="h-9 border-0 bg-[#f0f2f5] pl-9 shadow-none focus-visible:ring-1 dark:bg-[#2a3942]" />
+                </div>
+                <span className="min-w-[52px] text-center text-xs text-muted-foreground">
+                  {messageSearchLoading ? 'Searching…' : messageSearchError ? (
+                    <button type="button" className="text-red-600 underline" title={messageSearchError} onClick={() => setMessageSearchRetryNonce(value => value + 1)}>Retry</button>
+                  ) : messageSearchMatches.length > 0 ? `${currentSearchIndex + 1} of ${messageSearchMatches.length}` : '0 of 0'}
+                </span>
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" disabled={currentSearchIndex <= 0 || messageSearchMatches.length === 0} onClick={() => setCurrentSearchIndex(index => Math.max(0, index - 1))} aria-label="Previous search result">
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                </Button>
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" disabled={messageSearchMatches.length === 0 || (currentSearchIndex >= messageSearchMatches.length - 1 && !messageSearchHasMore) || messageSearchLoading} onClick={goToNextSearchResult} aria-label="Next search result">
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                </Button>
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={closeMessageSearch} aria-label="Close message search">
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </Button>
+              </div>
+            )}
+
+            {connectionState !== 'connected' && (
+              <div className={`flex items-center justify-center gap-2 px-3 py-1.5 text-xs ${connectionState === 'disconnected' ? 'bg-[#fff4e5] text-[#8a4b08] dark:bg-[#3b2a1d] dark:text-[#f0b56b]' : 'bg-[#e7f8f3] text-[#047857] dark:bg-[#12372f] dark:text-[#6ee7b7]'}`} role="status" aria-live="polite">
+                <span className={`h-2 w-2 rounded-full ${connectionState === 'disconnected' ? 'bg-[#d97706]' : 'animate-pulse bg-[#00a884]'}`} />
+                {connectionState === 'disconnected' ? 'Disconnected — messages can be retried when service returns' : connectionState === 'connecting' ? 'Connecting to realtime updates…' : 'Reconnecting to realtime updates…'}
+              </div>
+            )}
+
             {/* Messages Area */}
-            <div 
-              className="flex-1 overflow-y-auto p-4 space-y-3"
+            <div
+              ref={messagesContainerRef}
+              className="flex-1 overflow-y-auto px-[5%] md:px-[7%] py-3 scrollbar-thin"
+              onScroll={event => {
+                longPressControllerRef.current?.cancel();
+                const distanceFromBottom = event.currentTarget.scrollHeight - event.currentTarget.scrollTop - event.currentTarget.clientHeight;
+                const atBottom = distanceFromBottom < 100;
+                setIsAtBottom(atBottom);
+                if (atBottom) setNewMessagesBelow(0);
+                if (event.currentTarget.scrollTop < 80) loadOlderMessages();
+              }}
               style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' viewBox=\'0 0 60 60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' fill-rule=\'evenodd\'%3E%3Cg fill=\'%239C92AC\' fill-opacity=\'0.03\'%3E%3Cpath d=\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")' }}
             >
+              {olderMessagesLoading && (
+                <div className="flex items-center justify-center gap-2 py-2 text-xs text-[#667781] dark:text-[#8696a0]" role="status">
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[#00a884] border-t-transparent" />
+                  Loading older messages…
+                </div>
+              )}
               {messagesLoading ? (
                 <div className="flex items-center justify-center h-full" role="status" aria-live="polite">
                   <div className="text-center space-y-4">
@@ -919,51 +1686,106 @@ export default function ChatPage() {
                   </div>
                 </div>
               ) : (
-                messages.map((msg, idx) => (
+                groupedMessages.map(({ message: msg, position, showTail, showSenderName }, idx) => (
                   <div
                     key={`${msg.id}-${idx}`}
-                    className={`flex group ${msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
+                    className={`${startsNewDay(messages, idx) || position === 'single' || position === 'first' ? 'mt-1.5' : 'mt-[2px]'} rounded-lg focus:outline-none`}
+                    data-group-position={position}
+                    data-message-id={msg.id}
+                    tabIndex={0}
+                    aria-label={`${msg.direction === 'outgoing' ? 'You' : getMessageSenderLabel(msg)}: ${getMessagePreview(msg)}, ${formatTime(msg.timestamp)}`}
+                    onFocus={() => setFocusedMessageId(msg.id)}
+                    onKeyDown={event => {
+                      if (event.key === 'ArrowUp') { event.preventDefault(); focusMessageAt(Math.max(0, idx - 1)); }
+                      else if (event.key === 'ArrowDown') { event.preventDefault(); focusMessageAt(Math.min(messages.length - 1, idx + 1)); }
+                      else if (event.key === 'Home') { event.preventDefault(); focusMessageAt(0); }
+                      else if (event.key === 'End') { event.preventDefault(); focusMessageAt(messages.length - 1); }
+                      else if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') { event.preventDefault(); setActiveMessageMenu(msg.id); }
+                    }}
+                    onPointerDown={event => {
+                      if (event.pointerType !== 'touch' || (event.target as HTMLElement).closest('a,button,input,textarea,audio,video')) return;
+                      longPressControllerRef.current?.start(event.clientX, event.clientY, msg);
+                    }}
+                    onPointerMove={event => longPressControllerRef.current?.move(event.clientX, event.clientY)}
+                    onPointerUp={() => longPressControllerRef.current?.end()}
+                    onPointerCancel={() => longPressControllerRef.current?.cancel()}
+                    onContextMenu={event => {
+                      if ((event.target as HTMLElement).closest('a,button,input,textarea,audio,video')) return;
+                      event.preventDefault();
+                      if (window.matchMedia('(pointer: coarse)').matches) setActionSheetMessage(msg);
+                      else setActiveMessageMenu(msg.id);
+                    }}
+                    ref={element => {
+                      if (element) messageElementRefs.current.set(msg.id, element);
+                      else messageElementRefs.current.delete(msg.id);
+                    }}
                   >
-                    {/* Delete button for outgoing messages (appears on hover) */}
-                    {msg.direction === 'outgoing' && (
-                      <div className="flex items-center mr-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {showDeleteConfirm === (msg.messageId || msg.id) ? (
-                          <div className="flex items-center gap-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-border p-1">
-                            <button
-                              onClick={() => handleDeleteMessage(msg.messageId || msg.id)}
-                              disabled={deletingMessageId === (msg.messageId || msg.id)}
-                              className="text-xs px-2 py-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
-                            >
-                              {deletingMessageId === (msg.messageId || msg.id) ? '...' : 'Delete'}
-                            </button>
-                            <button
-                              onClick={() => setShowDeleteConfirm(null)}
-                              className="text-xs px-2 py-1 text-muted-foreground hover:bg-secondary rounded transition-colors"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => setShowDeleteConfirm(msg.messageId || msg.id)}
-                            className="p-1.5 rounded-full hover:bg-red-50 dark:hover:bg-red-900/20 text-muted-foreground hover:text-red-500 transition-colors"
-                            title="Delete message"
-                          >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
-                            </svg>
-                          </button>
-                        )}
+                    {startsNewDay(messages, idx) && (
+                      <div className="sticky top-1 z-10 flex justify-center py-1.5">
+                        <span className="rounded-lg bg-white/95 dark:bg-[#182229] px-3 py-1.5 text-[11px] font-medium text-[#54656f] dark:text-[#8696a0] shadow-sm">{formatDateLabel(msg.timestamp)}</span>
+                      </div>
+                    )}
+                    <div className={`flex group ${msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}>
+                    <div className="relative self-center mx-1">
+                      <button
+                        onClick={() => setActiveMessageMenu(activeMessageMenu === msg.id ? null : msg.id)}
+                        className="rounded-full p-1.5 opacity-100 text-muted-foreground transition-opacity hover:bg-black/5 focus:opacity-100 md:opacity-0 md:group-hover:opacity-100 dark:hover:bg-white/10"
+                        aria-label="Message actions"
+                        aria-expanded={activeMessageMenu === msg.id}
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                      </button>
+                      {activeMessageMenu === msg.id && (
+                        <div role="menu" className="absolute left-0 top-8 z-30 w-44 overflow-hidden rounded-lg border border-border bg-white py-1 shadow-xl dark:bg-[#233138]">
+                          <button role="menuitem" onClick={() => { setReplyTo(msg); setActiveMessageMenu(null); inputRef.current?.focus(); }} className="w-full px-4 py-2 text-left text-sm hover:bg-secondary">Reply</button>
+                          <button role="menuitem" onClick={() => { setReactionPickerMessage(msg); setActiveMessageMenu(null); }} className="w-full px-4 py-2 text-left text-sm hover:bg-secondary">React</button>
+                          <button role="menuitem" onClick={() => handleCopyMessage(msg)} className="w-full px-4 py-2 text-left text-sm hover:bg-secondary">Copy</button>
+                          {msg.direction === 'outgoing' && (
+                            <button role="menuitem" onClick={() => { setShowDeleteConfirm(msg.messageId || msg.id); setActiveMessageMenu(null); }} className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20">Delete for everyone</button>
+                          )}
+                        </div>
+                      )}
+                      {reactionPickerMessage?.id === msg.id && (
+                        <div className="absolute left-0 top-8 z-30 flex gap-1 rounded-full border border-border bg-white p-1.5 shadow-xl dark:bg-[#233138]">
+                          {['👍', '❤️', '😂', '😮', '😢', '🙏'].map(emoji => (
+                            <button key={emoji} onClick={() => handleReaction(msg, emoji)} className="flex h-8 w-8 items-center justify-center rounded-full text-lg hover:bg-secondary" aria-label={`React with ${emoji}`}>{emoji}</button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {showDeleteConfirm === (msg.messageId || msg.id) && (
+                      <div className="self-center flex items-center gap-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-border p-1">
+                        <button onClick={() => handleDeleteMessage(msg.messageId || msg.id)} disabled={deletingMessageId === (msg.messageId || msg.id)} className="text-xs px-2 py-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors">{deletingMessageId === (msg.messageId || msg.id) ? '...' : 'Delete'}</button>
+                        <button onClick={() => setShowDeleteConfirm(null)} className="text-xs px-2 py-1 text-muted-foreground hover:bg-secondary rounded transition-colors">Cancel</button>
                       </div>
                     )}
                     <div
-                      className={`max-w-[70%] rounded-2xl px-4 py-2 overflow-hidden ${
+                      data-message-bubble="true"
+                      data-search-active={activeSearchMessageId === msg.id ? 'true' : undefined}
+                      data-message-tail={showTail ? 'true' : undefined}
+                      className={`relative max-w-[86%] md:max-w-[70%] rounded-lg px-2.5 pt-1.5 pb-1 overflow-visible text-[14.2px] leading-[19px] shadow-sm ${activeSearchMessageId === msg.id || focusedMessageId === msg.id ? 'ring-2 ring-[#00a884] ring-offset-2 ring-offset-transparent' : ''} ${
                         msg.direction === 'outgoing'
-                          ? 'bg-[#DCF8C6] dark:bg-[#005C4B] text-foreground rounded-br-sm'
-                          : 'bg-white dark:bg-gray-800 text-foreground rounded-bl-sm shadow-sm'
+                          ? `bg-[#d9fdd3] dark:bg-[#005c4b] text-foreground ${position === 'middle' || position === 'last' ? 'rounded-tr-sm' : ''}`
+                          : `bg-white dark:bg-[#202c33] text-foreground ${position === 'middle' || position === 'last' ? 'rounded-tl-sm' : ''}`
                       }`}
                     >
-                      {selectedConversation.type === 'group' && msg.direction === 'incoming' && (
+                      {showTail && (
+                        <span aria-hidden="true" className={`absolute bottom-0 h-0 w-0 ${msg.direction === 'outgoing' ? '-right-[6px] border-b-0 border-l-[7px] border-t-[7px] border-b-transparent border-l-[#d9fdd3] border-t-transparent dark:border-l-[#005c4b]' : '-left-[6px] border-b-0 border-r-[7px] border-t-[7px] border-b-transparent border-r-white border-t-transparent dark:border-r-[#202c33]'}`} />
+                      )}
+                      {msg.quotedMessageId && (() => {
+                        const quoted = messages.find(candidate => candidate.id === msg.quotedMessageId);
+                        return (
+                          <div className="mb-1.5 rounded-md border-l-[3px] border-[#06cf9c] bg-black/5 dark:bg-black/20 px-2.5 py-1.5 min-w-[160px]">
+                            <p className="text-xs font-semibold text-[#008069] dark:text-[#06cf9c]">
+                              {quoted ? getReplySenderLabel(quoted, selectedConversation) : 'Original message'}
+                            </p>
+                            <p className="text-xs text-[#667781] dark:text-[#aebac1] truncate max-w-[280px]">
+                              {quoted ? getMessagePreview(quoted) : 'Message unavailable'}
+                            </p>
+                          </div>
+                        );
+                      })()}
+                      {selectedConversation.type === 'group' && showSenderName && (
                         <p className="text-xs font-semibold text-[#128C7E] dark:text-[#25D366] mb-1">
                           {getMessageSenderLabel(msg)}
                         </p>
@@ -1149,12 +1971,36 @@ export default function ChatPage() {
                       )}
 
                       {/* Timestamp and Status */}
-                      <div className={`flex items-center gap-1 mt-1 ${msg.direction === 'outgoing' ? 'justify-end' : ''}`}>
-                        <span className="text-xs text-muted-foreground">
+                      <div className={`flex items-center gap-0.5 mt-0.5 ${msg.direction === 'outgoing' ? 'justify-end' : ''}`}>
+                        <span className="text-[10px] leading-3 text-[#667781] dark:text-[#8696a0]">
                           {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
-                        {msg.direction === 'outgoing' && <MessageStatus status={msg.status} />}
+                        {msg.direction === 'outgoing' && msg.type === 'text' && msg.status === 'failed' ? (
+                          <button
+                            type="button"
+                            onClick={() => handleRetryMessage(msg)}
+                            disabled={retryingMessageId === msg.id}
+                            aria-label="Retry message"
+                            className="ml-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[11px] font-bold text-white hover:bg-red-600 disabled:animate-pulse"
+                            title="Message failed. Click to retry."
+                          >
+                            !
+                          </button>
+                        ) : msg.direction === 'outgoing' ? <MessageStatus status={msg.status} /> : null}
                       </div>
+                      {msg.reactions && msg.reactions.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1" aria-label="Message reactions">
+                          {Array.from(new Set(msg.reactions)).map(emoji => {
+                            const count = msg.reactions?.filter(reaction => reaction === emoji).length || 0;
+                            return (
+                              <span key={emoji} className="inline-flex h-6 items-center gap-1 rounded-full border border-[#d8dcdf] bg-white px-1.5 text-sm shadow-sm dark:border-[#3b4a54] dark:bg-[#233138]">
+                                {emoji}{count > 1 && <span className="text-[10px] text-muted-foreground">{count}</span>}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                     </div>
                   </div>
                 ))
@@ -1162,9 +2008,44 @@ export default function ChatPage() {
               <div ref={messagesEndRef} />
             </div>
 
+            {!isAtBottom && (
+              <Button
+                type="button"
+                onClick={() => scrollToBottom()}
+                aria-label="Jump to latest message"
+                className="absolute bottom-[76px] right-4 z-20 h-10 w-10 rounded-full bg-white p-0 text-[#54656f] shadow-lg hover:bg-[#f0f2f5] dark:bg-[#202c33] dark:text-[#d1d7db] dark:hover:bg-[#2a3942]"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                {newMessagesBelow > 0 && (
+                  <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#00a884] px-1 text-[10px] font-semibold text-white" aria-label={`${newMessagesBelow} new messages`}>
+                    {newMessagesBelow > 99 ? '99+' : newMessagesBelow}
+                  </span>
+                )}
+              </Button>
+            )}
+
             {/* Message Input */}
-            <div className="p-4 border-t border-border bg-secondary/30">
-              <div className="flex items-center gap-3">
+            <div className="px-2.5 md:px-4 py-2 border-t border-[#d8dcdf] dark:border-[#2a3942] bg-[#f0f2f5] dark:bg-[#202c33]">
+              {replyTo && (
+                <div className="mb-2 ml-11 md:ml-20 flex items-center gap-2 rounded-lg bg-white dark:bg-[#2a3942] px-3 py-2 shadow-sm">
+                  <div className="min-w-0 flex-1 border-l-[3px] border-[#06cf9c] pl-3">
+                    <p className="text-xs font-semibold text-[#008069] dark:text-[#06cf9c]">
+                      Replying to {getReplySenderLabel(replyTo, selectedConversation)}
+                    </p>
+                    <p className="truncate text-xs text-[#667781] dark:text-[#aebac1]">
+                      {getMessagePreview(replyTo)}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setReplyTo(null)}
+                    className="rounded-full p-1.5 text-muted-foreground hover:bg-black/5 dark:hover:bg-white/10"
+                    aria-label="Cancel reply"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+              )}
+              <div className="flex items-end gap-1.5 md:gap-2">
                 {/* Emoji Button */}
                 <div className="relative">
                   <Button
@@ -1254,33 +2135,52 @@ export default function ChatPage() {
                   )}
                   <input ref={attachRef} type="file" className="hidden" onChange={(e) => {
                     const file = e.target.files?.[0];
-                    if (file) handleFileUpload(file);
+                    if (file) handleAttachmentSelected(file);
                     e.target.value = '';
                   }} />
                 </div>
 
                 {/* Input */}
-                <Input
+                <Textarea
                   ref={inputRef}
                   value={messageInput}
                   onChange={e => {
                     setMessageInput(e.target.value);
-                    // Send real-time typing indicator (debounced, max once per 3s)
+                    if (typingStopTimeoutRef.current) clearTimeout(typingStopTimeoutRef.current);
                     if (selectedConversation && selectedProfile && e.target.value) {
                       const now = Date.now();
                       if (now - lastTypingSentRef.current > 3000) {
                         lastTypingSentRef.current = now;
                         api.sendTyping({ profileId: selectedProfile, to: selectedConversation.jid }).catch(() => {});
                       }
+                      typingStopTimeoutRef.current = setTimeout(() => {
+                        api.sendTyping({ profileId: selectedProfile, to: selectedConversation.jid, state: 'available' }).catch(() => {});
+                        lastTypingSentRef.current = 0;
+                        typingStopTimeoutRef.current = null;
+                      }, 3000);
+                    } else if (selectedConversation && selectedProfile) {
+                      api.sendTyping({ profileId: selectedProfile, to: selectedConversation.jid, state: 'available' }).catch(() => {});
+                      lastTypingSentRef.current = 0;
+                      typingStopTimeoutRef.current = null;
                     }
                   }}
-                  onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleSend();
+                    } else if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
                   placeholder="Type a message"
-                  className="flex-1"
+                  rows={1}
+                  className="min-h-10 max-h-32 flex-1 resize-none rounded-lg border-0 bg-white dark:bg-[#2a3942] px-3 py-2.5 leading-5 shadow-none focus-visible:ring-0"
                 />
 
                 {/* Schedule Button */}
-                <div className="relative">
+                <div className="relative hidden sm:block">
                   <Button
                     variant="ghost"
                     size="sm"
@@ -1334,7 +2234,7 @@ export default function ChatPage() {
                 <Button
                   onClick={handleSend}
                   disabled={!messageInput.trim() || sending}
-                  className="bg-[#25D366] hover:bg-[#128C7E]"
+                  className="h-10 w-10 shrink-0 rounded-full bg-[#00a884] hover:bg-[#008f72] p-0 text-white"
                   size="sm"
                 >
                   {sending ? (
@@ -1350,10 +2250,105 @@ export default function ChatPage() {
                 </Button>
               </div>
             </div>
+            {actionSheetMessage && (
+              <div className="fixed inset-0 z-[120] flex items-end bg-black/40 md:hidden" role="dialog" aria-modal="true" aria-label="Message actions" onClick={() => setActionSheetMessage(null)}>
+                <div
+                  className="max-h-[85vh] w-full overflow-y-auto rounded-t-3xl bg-white px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 shadow-2xl dark:bg-[#202c33]"
+                  role="menu"
+                  onClick={event => event.stopPropagation()}
+                  onKeyDown={event => {
+                    if (event.key !== 'Tab') return;
+                    const actions = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])'));
+                    const first = actions[0];
+                    const last = actions[actions.length - 1];
+                    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+                    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+                  }}
+                >
+                  <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-[#c7cdd1] dark:bg-[#53636c]" />
+                  <div className="mb-4 rounded-xl bg-[#f0f2f5] px-3 py-2 dark:bg-[#2a3942]">
+                    <p className="text-xs font-semibold text-[#008069] dark:text-[#06cf9c]">{actionSheetMessage.direction === 'outgoing' ? 'You' : getMessageSenderLabel(actionSheetMessage)}</p>
+                    <p className="mt-1 truncate text-sm text-[#3b4a54] dark:text-[#d1d7db]">{getMessagePreview(actionSheetMessage)}</p>
+                  </div>
+                  <div className="mb-3 flex justify-around rounded-2xl bg-[#f0f2f5] p-2 dark:bg-[#2a3942]" aria-label="Reactions">
+                    {['👍', '❤️', '😂', '😮', '😢', '🙏'].map((emoji, index) => (
+                      <button key={emoji} autoFocus={index === 0} role="menuitem" onClick={() => { handleReaction(actionSheetMessage, emoji); setActionSheetMessage(null); }} className="flex h-11 w-11 items-center justify-center rounded-full text-2xl hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-[#00a884]" aria-label={`React with ${emoji}`}>{emoji}</button>
+                    ))}
+                  </div>
+                  <button role="menuitem" onClick={() => { setReplyTo(actionSheetMessage); setActionSheetMessage(null); setTimeout(() => inputRef.current?.focus(), 0); }} className="flex min-h-12 w-full items-center rounded-xl px-4 text-left text-base hover:bg-secondary">Reply</button>
+                  <button role="menuitem" onClick={() => { handleCopyMessage(actionSheetMessage); setActionSheetMessage(null); }} className="flex min-h-12 w-full items-center rounded-xl px-4 text-left text-base hover:bg-secondary">Copy</button>
+                  {actionSheetMessage.direction === 'outgoing' && (
+                    <button role="menuitem" onClick={() => { setShowDeleteConfirm(actionSheetMessage.messageId || actionSheetMessage.id); setActionSheetMessage(null); }} className="flex min-h-12 w-full items-center rounded-xl px-4 text-left text-base text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20">Delete for everyone</button>
+                  )}
+                  <button role="menuitem" onClick={() => setActionSheetMessage(null)} className="mt-2 flex min-h-12 w-full items-center justify-center rounded-xl border border-border text-base font-medium hover:bg-secondary">Cancel</button>
+                </div>
+              </div>
+            )}
+            {pendingAttachment && (
+              <div className="fixed inset-0 z-[100] flex flex-col bg-[#f0f2f5] dark:bg-[#111b21] md:absolute md:z-50" role="dialog" aria-modal="true" aria-label="Attachment preview">
+                <div className="flex h-[60px] items-center gap-3 border-b border-[#d8dcdf] bg-white px-3 dark:border-[#2a3942] dark:bg-[#202c33]">
+                  <Button variant="ghost" size="sm" className="h-9 w-9 p-0" onClick={clearAttachmentPreview} disabled={attachmentSending} aria-label="Cancel attachment">
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </Button>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold">{pendingAttachment.file.name}</p>
+                    <p className="text-xs text-muted-foreground">{pendingAttachment.file.size < 1024 * 1024 ? `${(pendingAttachment.file.size / 1024).toFixed(1)} KB` : `${(pendingAttachment.file.size / (1024 * 1024)).toFixed(1)} MB`} · {pendingAttachment.type}</p>
+                  </div>
+                  <Button variant="ghost" size="sm" className="text-sm" disabled={attachmentSending} onClick={() => attachRef.current?.click()} aria-label="Replace attachment">Replace</Button>
+                </div>
+
+                <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4 md:p-8">
+                  {pendingAttachment.type === 'image' ? (
+                    <img src={pendingAttachment.objectUrl} alt="Attachment preview" className="max-h-full max-w-full rounded-lg object-contain shadow-lg" />
+                  ) : pendingAttachment.type === 'video' ? (
+                    <video src={pendingAttachment.objectUrl} controls className="max-h-full max-w-full rounded-lg bg-black shadow-lg" aria-label="Attachment preview" />
+                  ) : pendingAttachment.type === 'audio' ? (
+                    <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-lg dark:bg-[#202c33]">
+                      <div className="mb-4 text-center text-5xl">🎵</div>
+                      <p className="mb-4 truncate text-center font-medium">{pendingAttachment.file.name}</p>
+                      <audio src={pendingAttachment.objectUrl} controls className="w-full" aria-label="Attachment preview" />
+                    </div>
+                  ) : (
+                    <div className="w-full max-w-md rounded-2xl bg-white p-8 text-center shadow-lg dark:bg-[#202c33]">
+                      <div className="mb-4 text-6xl">📄</div>
+                      <p className="break-words font-semibold">{pendingAttachment.file.name}</p>
+                      <p className="mt-2 text-sm text-muted-foreground">{pendingAttachment.file.type || 'Document'}</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t border-[#d8dcdf] bg-white px-3 py-3 dark:border-[#2a3942] dark:bg-[#202c33] md:px-6">
+                  {attachmentError && (
+                    <div className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300" role="alert">Upload failed: {attachmentError}. Your file is still selected.</div>
+                  )}
+                  <div className="mx-auto flex max-w-3xl items-end gap-2">
+                    {pendingAttachment.type !== 'audio' && (
+                      <Textarea
+                        value={attachmentCaption}
+                        onChange={event => setAttachmentCaption(event.target.value)}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter' && !event.shiftKey) {
+                            event.preventDefault();
+                            handleAttachmentSend();
+                          }
+                        }}
+                        placeholder="Add a caption"
+                        rows={1}
+                        disabled={attachmentSending}
+                        className="min-h-10 max-h-28 flex-1 resize-none rounded-lg border-0 bg-[#f0f2f5] px-3 py-2.5 shadow-none focus-visible:ring-1 dark:bg-[#2a3942]"
+                      />
+                    )}
+                    <Button onClick={handleAttachmentSend} disabled={attachmentSending} aria-label={attachmentError ? 'Retry attachment' : 'Send attachment'} className="h-11 w-11 shrink-0 rounded-full bg-[#00a884] p-0 text-white hover:bg-[#008f72]">
+                      {attachmentSending ? <span className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" /> : <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         ) : (
           /* No Conversation Selected */
-          <div className="flex-1 flex items-center justify-center bg-secondary/10">
+          <div className="flex-1 flex items-center justify-center bg-[#f0f2f5] dark:bg-[#222e35] border-b-[6px] border-[#25d366]">
             <div className="text-center">
               <div className="w-24 h-24 mx-auto mb-6 rounded-full bg-secondary/50 flex items-center justify-center">
                 <svg className="w-12 h-12 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
