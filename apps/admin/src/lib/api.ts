@@ -329,6 +329,16 @@ class ApiClient {
     return this.request<Contact[]>(`/contacts?profileId=${profileId}&limit=1000`);
   }
 
+  async validateContactPhone(profileId: string, phone: string) {
+    return this.request<{
+      phone: string;
+      originalPhone: string;
+      validFormat: boolean;
+      onWhatsApp: boolean | null;
+      profileStatus: string;
+    }>(`/contacts/profile/${profileId}/validate/${encodeURIComponent(phone)}`);
+  }
+
   async createContact(data: { profileId: string; phone: string; name?: string; email?: string; tags?: string[]; notes?: string }) {
     // Backend DTO accepts: profileId, phone, name, tags, metadata
     // email and notes go into metadata since they're not in the Contact schema
@@ -502,8 +512,32 @@ class ApiClient {
     );
   }
 
-  async getMessages(conversationId: string) {
-    return this.request<any[]>(`/messages/conversation/${conversationId}`);
+  async getMessages(conversationId: string, options: { limit?: number; before?: string } = {}) {
+    const params = new URLSearchParams();
+    if (options.limit) params.set('limit', String(options.limit));
+    if (options.before) params.set('before', options.before);
+    const query = params.toString();
+    return this.request<{ messages: any[]; hasMore: boolean } | any[]>(
+      `/messages/conversation/${conversationId}${query ? `?${query}` : ''}`
+    );
+  }
+
+  async searchConversationMessages(conversationId: string, profileId: string, query: string, options: { limit?: number; cursor?: string } = {}) {
+    const params = new URLSearchParams({ profileId, q: query });
+    if (options.limit) params.set('limit', String(options.limit));
+    if (options.cursor) params.set('cursor', options.cursor);
+    return this.request<{ messages: any[]; hasMore: boolean; nextCursor: string | null }>(
+      `/conversations/${conversationId}/messages/search?${params.toString()}`
+    );
+  }
+
+  async getConversationMessageContext(conversationId: string, messageId: string, profileId: string, options: { before?: number; after?: number } = {}) {
+    const params = new URLSearchParams({ profileId });
+    if (options.before !== undefined) params.set('before', String(options.before));
+    if (options.after !== undefined) params.set('after', String(options.after));
+    return this.request<{ messages: any[]; targetMessageId: string }>(
+      `/conversations/${conversationId}/messages/${messageId}/context?${params.toString()}`
+    );
   }
 
   async muteConversation(conversationId: string) {
@@ -523,7 +557,7 @@ class ApiClient {
   }
 
   // Send Typing Indicator
-  async sendTyping(data: { profileId: string; to: string; duration?: number }) {
+  async sendTyping(data: { profileId: string; to: string; state?: 'composing' | 'recording' | 'available'; duration?: number }) {
     return this.request<any>('/messages/typing', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -533,6 +567,20 @@ class ApiClient {
   // Send Message
   async sendMessage(data: { profileId: string; to: string; text: string }) {
     return this.request<any>('/messages/text', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async sendReply(data: { profileId: string; quotedMessageId: string; text: string }) {
+    return this.request<any>('/messages/reply', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async sendReaction(data: { profileId: string; messageId: string; emoji: string }) {
+    return this.request<any>('/messages/reaction', {
       method: 'POST',
       body: JSON.stringify(data),
     });

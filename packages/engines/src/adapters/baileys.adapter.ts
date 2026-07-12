@@ -22,6 +22,7 @@ import type {
   PollOptions,
   SendMessageOptions,
 } from '../types';
+import { normalizeBaileysPresenceUpdate } from '../presence';
 
 
 export class BaileysAdapter implements IWhatsAppEngine {
@@ -161,6 +162,12 @@ export class BaileysAdapter implements IWhatsAppEngine {
 
     // Credentials update
     this.socket.ev.on('creds.update', this.authState.saveCreds);
+
+    this.socket.ev.on('presence.update', update => {
+      for (const presence of normalizeBaileysPresenceUpdate(update)) {
+        this.config?.onPresenceUpdate?.(presence);
+      }
+    });
 
     // Messages
     this.socket.ev.on('messages.upsert', async ({ messages, type }) => {

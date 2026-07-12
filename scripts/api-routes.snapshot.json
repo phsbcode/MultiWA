@@ -7,7 +7,7 @@
     "@ApiExcludeController()",
     "@ApiExcludeEndpoint()"
   ],
-  "routeCount": 214,
+  "routeCount": 221,
   "routes": [
     {
       "method": "DELETE",
@@ -422,6 +422,14 @@
       "path": "/api/v1/conversations/:id/messages"
     },
     {
+      "method": "GET",
+      "path": "/api/v1/conversations/:id/messages/:messageId/context"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/conversations/:id/messages/search"
+    },
+    {
       "method": "PUT",
       "path": "/api/v1/conversations/:id/mute"
     },
@@ -508,6 +516,26 @@
     {
       "method": "PUT",
       "path": "/api/v1/integrations/config"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/integrations/fastbots"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/integrations/fastbots/:profileId"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/integrations/fastbots/:profileId"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/integrations/fastbots/:profileId/reset-chats"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/integrations/fastbots/:profileId/test"
     },
     {
       "method": "POST",

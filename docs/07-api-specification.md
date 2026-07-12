@@ -202,6 +202,8 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `GET` | `/conversations` | List conversations |
 | `GET` | `/conversations/:id` | Get conversation |
 | `GET` | `/conversations/:id/messages` | List messages in conversation |
+| `GET` | `/conversations/:id/messages/search` | Search full message history |
+| `GET` | `/conversations/:id/messages/:messageId/context` | Get chronological context around a message |
 | `PUT` | `/conversations/:id/read` | Mark conversation read |
 | `PUT` | `/conversations/:id/archive` | Archive |
 | `PUT` | `/conversations/:id/unarchive` | Unarchive |
@@ -337,6 +339,11 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `GET` | `/integrations/config` | Get integration config |
 | `PUT` | `/integrations/config` | Update integration config |
 | `POST` | `/integrations/test` | Test integration connectivity |
+| `GET` | `/integrations/fastbots` | List FastBots configurations |
+| `GET` | `/integrations/fastbots/:profileId` | Get FastBots configuration for a profile |
+| `PUT` | `/integrations/fastbots/:profileId` | Update FastBots configuration for a profile |
+| `POST` | `/integrations/fastbots/:profileId/test` | Test a profile's FastBots connection |
+| `POST` | `/integrations/fastbots/:profileId/reset-chats` | Reset tracked FastBots chats for a profile |
 
 ### Statistics (`/statistics`)
 

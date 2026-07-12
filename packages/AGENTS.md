@@ -22,6 +22,7 @@ Shared libraries, domain logic, database layer, WhatsApp engine adapters, SDKs, 
 - `core/` has no external dependencies; defines interfaces that adapters implement
 - `database/` is the sole Prisma schema owner; all DB access goes through it
 - `engines/` factory (`src/factory/engine-factory.ts`) selects adapter by profile type
+- `engines/` normalizes provider presence into canonical chat/participant JIDs; only adapters with documented inbound presence events emit it. whatsapp-web.js currently supports outbound chat state only and must not fabricate inbound presence.
 - SDKs must track the API spec in `docs/07-api-specification.md`
 - All packages use TypeScript strict mode and are built with `tsc`
 
@@ -36,6 +37,7 @@ Shared libraries, domain logic, database layer, WhatsApp engine adapters, SDKs, 
 
 - `turbo lint --filter=@multiwa/core` (and similar per package)
 - `turbo test --filter=@multiwa/core`
+- `pnpm --filter @multiwa/engines test` for engine normalization utilities
 - `turbo typecheck`
 - Prisma: `pnpm --filter @multiwa/database db:validate`
 

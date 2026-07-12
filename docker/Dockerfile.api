@@ -68,6 +68,8 @@ RUN apt-get update && apt-get install -y \
   libxshmfence1 \
   libgbm1 \
   git \
+  unzip \
+  wget \
   --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
@@ -90,9 +92,20 @@ COPY --from=builder /app/packages/engines/node_modules ./packages/engines/node_m
 # Re-generate Prisma client for production
 RUN npm install -g prisma@6.19.2 && cd packages/database && prisma generate
 
-# Install bundled Chromium for Puppeteer (system chromium 150 crashes in Docker)
+# Install the same pinned Chrome-for-Testing binary used by the production
+# Dockerfile. Do not rely on `npx puppeteer`: whatsapp-web.js does not expose
+# Puppeteer's CLI binary in a clean production workspace install.
 ENV PUPPETEER_CACHE_DIR=/root/.cache/puppeteer
-RUN npx puppeteer browsers install chrome
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+RUN mkdir -p /root/.cache/puppeteer && \
+    CHROME_VERSION=144.0.7559.96 && \
+    wget -qO /tmp/chrome.zip "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip" && \
+    mkdir -p /root/.cache/puppeteer/chrome/linux-${CHROME_VERSION} && \
+    cd /root/.cache/puppeteer/chrome/linux-${CHROME_VERSION} && \
+    unzip -q /tmp/chrome.zip && \
+    rm /tmp/chrome.zip && \
+    chmod +x /root/.cache/puppeteer/chrome/linux-${CHROME_VERSION}/chrome-linux64/chrome
+ENV PUPPETEER_EXECUTABLE_PATH=/root/.cache/puppeteer/chrome/linux-144.0.7559.96/chrome-linux64/chrome
 
 # Copy entrypoint script
 COPY docker/entrypoint-api.sh /app/entrypoint-api.sh

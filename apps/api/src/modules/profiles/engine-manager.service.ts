@@ -14,6 +14,11 @@ import { RuleEngineService, IncomingMessage } from '../automation/rule-engine.se
 import { NotificationsService, NotificationType } from '../notifications/notifications.service';
 import { AppEvent, HooksService } from '../hooks/hooks.service';
 import { FastBotsService } from '../integrations/fastbots.service';
+import {
+  isProtocolStatusMessageType,
+  isStatusBroadcastJid,
+  shouldRouteTextToFastBots,
+} from './message-type-filter';
 import { resolveSenderIdentity } from './sender-identity';
 
 
@@ -407,7 +412,21 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           this.logger.debug(`Skipping own message for profile ${profileId}`);
           return;
         }
-        this.logger.log(`📨 Incoming message for profile ${profileId} from ${message.from}: type=${message.type}, body=${(message.body || '').substring(0, 50)}`);
+        // WhatsApp protocol/status events can contain a body but are not
+        // customer messages. Drop them before creating conversations,
+        // persisting messages, running automations, firing hooks, or calling AI.
+        if (
+          isProtocolStatusMessageType(message.type)
+          || isStatusBroadcastJid(message.from)
+        ) {
+          this.logger.debug(
+            `Skipping non-customer status event type=${message.type} from=${message.from} for profile ${profileId}`,
+          );
+          return;
+        }
+        this.logger.debug(
+          `Incoming message metadata profile=${profileId} from=${message.from} type=${message.type} hasBody=${Boolean(message.body)} hasMedia=${Boolean(message.hasMedia)}`,
+        );
         try {
           // Determine message type and content
           const msgType = message.type || 'chat';
@@ -451,34 +470,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
 
           // Debug logging for special message types
           if (['location', 'poll', 'poll_creation', 'event', 'event_creation'].includes(msgType)) {
-            this.logger.log(`🔍 Special msg type=${msgType}, keys=${Object.keys(message).join(',')}`);
-            this.logger.log(`🔍 message.location=${JSON.stringify(message.location)}`);
-            this.logger.log(`🔍 message.pollName=${message.pollName}, message.pollOptions=${JSON.stringify(message.pollOptions)}`);
-            if (message._data) {
-              this.logger.log(`🔍 message._data keys=${Object.keys(message._data).join(',')}`);
-              this.logger.log(`🔍 message._data.lat=${message._data.lat}, message._data.lng=${message._data.lng}`);
-              this.logger.log(`🔍 message._data.pollName=${message._data.pollName}`);
-              this.logger.log(`🔍 message._data.pollOptions=${JSON.stringify(message._data.pollOptions)}`);
-              this.logger.log(`🔍 message._data.eventName=${message._data.eventName}`);
-              this.logger.log(`🔍 message._data.eventDescription=${message._data.eventDescription}`);
-              this.logger.log(`🔍 message._data.eventStartTime=${message._data.eventStartTime}`);
-              this.logger.log(`🔍 message._data relevant=${JSON.stringify({
-                lat: message._data.lat,
-                lng: message._data.lng,
-                loc: message._data.loc,
-                body: (message._data.body || '').substring(0, 100),
-                type: message._data.type,
-                subtype: message._data.subtype,
-                pollName: message._data.pollName,
-                pollOptions: message._data.pollOptions,
-                pollInvalidated: message._data.pollInvalidated,
-                eventName: message._data.eventName,
-                eventDescription: message._data.eventDescription,
-                eventStartTime: message._data.eventStartTime,
-                eventEndTime: message._data.eventEndTime,
-                eventLocation: message._data.eventLocation,
-              })}`);
-            }
+            this.logger.debug(
+              `Special message metadata type=${msgType} keys=${Object.keys(message).join(',')} dataKeys=${message._data ? Object.keys(message._data).join(',') : 'none'}`,
+            );
           }
 
           if (message.hasMedia) {
@@ -518,7 +512,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
               content.longitude = lng;
               content.description = message._data.loc || message._data.description || '';
               content.name = message._data.loc || message._data.description || 'Location';
-              this.logger.log(`📍 Location from _data: ${lat}, ${lng}`);
+              this.logger.debug('Location metadata extracted from provider data');
             }
           }
 
@@ -534,7 +528,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
               content.pollOptions = content.options;
             }
             if (allowMultipleAnswers !== undefined) content.allowMultipleAnswers = allowMultipleAnswers;
-            this.logger.log(`📊 Poll data: name=${pollName}, options=${JSON.stringify(content.options)}`);
+            this.logger.debug(
+              `Poll metadata extracted hasName=${Boolean(pollName)} optionCount=${Array.isArray(content.options) ? content.options.length : 0}`,
+            );
           }
 
           // Extract event data
@@ -549,7 +545,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             if (eventStart) content.eventStartTime = eventStart;
             if (eventEnd) content.eventEndTime = eventEnd;
             if (eventLoc) content.eventLocation = eventLoc;
-            this.logger.log(`📅 Event data: name=${eventName}, start=${eventStart}, loc=${eventLoc}`);
+            this.logger.debug(
+              `Event metadata extracted hasName=${Boolean(eventName)} hasStart=${Boolean(eventStart)} hasLocation=${Boolean(eventLoc)}`,
+            );
           }
 
           // Extract vCard/contact data
@@ -693,7 +691,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             // Log and handle automation action results
             for (const result of results) {
               if (result.success) {
-                this.logger.log(`✅ Action "${result.action}" succeeded for ${senderJid}${result.data?.message ? `: ${(result.data.message as string).substring(0, 50)}...` : ''}`);
+                this.logger.debug(
+                  `Automation action succeeded action=${result.action} sender=${senderJid} hasResponse=${Boolean(result.data?.message)}`,
+                );
                 
                 // Increment daily message count for actions that send messages
                 const sendingActions = ['reply', 'send_image', 'send_document', 'send_poll', 'send_audio', 'send_video', 'send_location', 'send_contact'];
@@ -726,7 +726,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           // === FASTBOTS AI INTEGRATION ===
           // If FastBots is enabled for this profile, process the message
           // through the AI chatbot and send the reply.
-          if (!isGroup && content?.text) {
+          if (!isGroup && shouldRouteTextToFastBots(msgType, content?.text)) {
             this.fastBotsService.handleIncomingMessage(
               profileId,
               jid,
@@ -734,6 +734,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             ).catch(err => {
               this.logger.warn(`FastBots integration error: ${err.message}`);
             });
+          } else if (!isGroup && content?.text) {
+            this.logger.debug(
+              `Skipping empty text for FastBots on profile ${profileId}`,
+            );
           }
         } catch (error) {
           this.logger.error(`Error processing incoming message:`, error);
@@ -757,6 +761,30 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           this.eventsGateway.emitMessageAck(profileId, messageId, status);
         } catch (error) {
           this.logger.warn(`Failed to update message ack: ${(error as Error).message}`);
+        }
+      },
+      onPresenceUpdate: async presence => {
+        try {
+          const alternateJid = presence.chatJid.endsWith('@s.whatsapp.net')
+            ? presence.chatJid.replace('@s.whatsapp.net', '@c.us')
+            : presence.chatJid.endsWith('@c.us')
+              ? presence.chatJid.replace('@c.us', '@s.whatsapp.net')
+              : presence.chatJid;
+          const conversation = await prisma.conversation.findFirst({
+            where: {
+              profileId,
+              jid: { in: Array.from(new Set([presence.chatJid, alternateJid])) },
+            },
+            select: { id: true },
+          });
+          if (!conversation) return;
+          this.eventsGateway.emitPresence(profileId, {
+            ...presence,
+            profileId,
+            conversationId: conversation.id,
+          });
+        } catch (error) {
+          this.logger.warn(`Failed to route presence for profile ${profileId}: ${(error as Error).message}`);
         }
       },
     };
