@@ -65,10 +65,12 @@ export default function ProfileDetailPage() {
     const wsUrl = getSocketUrl();
 
     // Connect to WebSocket server with /ws namespace (must match backend EventsGateway)
+    const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
     const socket = io(`${wsUrl}/ws`, {
       transports: ['websocket', 'polling'],
       timeout: 15000,
       forceNew: true,
+      auth: { token },
     });
 
     socketRef.current = socket;
