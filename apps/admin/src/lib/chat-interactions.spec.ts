@@ -1,10 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
-import { applyLiveTimelineUpdate, createLongPressController, getAccessibleMessageLabel, getCenteredScrollTop, getVisibleWindow, isReadOnlyChatMode, resolveChatShortcut, scrollTimelineToBottom, shouldLoadOlderMessages, shouldMarkConversationRead, shouldSendTypingStop } from './chat-interactions';
+import { applyLiveTimelineUpdate, createLongPressController, getAccessibleMessageLabel, getCenteredScrollTop, getNextVisibleLimit, getVisibleWindow, isReadOnlyChatMode, resolveChatShortcut, scrollTimelineToBottom, shouldLoadOlderMessages, shouldMarkConversationRead, shouldSendTypingStop } from './chat-interactions';
 
 describe('getVisibleWindow', () => {
   it('caps large lists and reports the hidden count', () => {
     const items = Array.from({ length: 300 }, (_, index) => index);
     expect(getVisibleWindow(items, 250)).toEqual({ items: items.slice(0, 250), hiddenCount: 50 });
+  });
+
+  it('grows the visible limit in bounded steps', () => {
+    expect(getNextVisibleLimit(80, 267, 80)).toBe(160);
+    expect(getNextVisibleLimit(240, 267, 80)).toBe(267);
+    expect(getNextVisibleLimit(267, 267, 80)).toBe(267);
   });
 });
 

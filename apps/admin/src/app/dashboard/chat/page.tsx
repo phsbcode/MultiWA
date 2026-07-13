@@ -10,7 +10,7 @@ import { getSocketUrl } from '@/lib/socket';
 import { api, Profile, Conversation, Contact } from '@/lib/api';
 import { groupChatMessages } from '@/lib/chat-message-grouping';
 import { applyPresenceEvent, expireTransientPresence, getPresenceLabel, type ChatPresenceEvent, type PresenceRecords } from '@/lib/chat-presence';
-import { applyLiveTimelineUpdate, createLongPressController, getAccessibleMessageLabel, getCenteredScrollTop, getVisibleWindow, isReadOnlyChatMode, resolveChatShortcut, scrollTimelineToBottom, shouldLoadOlderMessages, shouldMarkConversationRead, shouldSendTypingStop } from '@/lib/chat-interactions';
+import { applyLiveTimelineUpdate, createLongPressController, getAccessibleMessageLabel, getCenteredScrollTop, getNextVisibleLimit, getVisibleWindow, isReadOnlyChatMode, resolveChatShortcut, scrollTimelineToBottom, shouldLoadOlderMessages, shouldMarkConversationRead, shouldSendTypingStop } from '@/lib/chat-interactions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -53,6 +53,8 @@ interface PendingAttachment {
   objectUrl: string;
   type: 'image' | 'video' | 'audio' | 'document';
 }
+
+const CONVERSATION_WINDOW_STEP = 80;
 
 const MESSAGE_PAGE_SIZE = 40;
 
@@ -317,6 +319,7 @@ export default function ChatPage() {
   const [messageSearchNextCursor, setMessageSearchNextCursor] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [conversationWindowSize, setConversationWindowSize] = useState(CONVERSATION_WINDOW_STEP);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showThreeDotMenu, setShowThreeDotMenu] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
@@ -1336,7 +1339,7 @@ export default function ChatPage() {
       if (aPinned !== bPinned) return bPinned - aPinned;
       return 0; // keep original order for un-pinned
     });
-  const { items: visibleConversations, hiddenCount: hiddenConversationCount } = getVisibleWindow(filteredConversations, 80);
+  const { items: visibleConversations, hiddenCount: hiddenConversationCount } = getVisibleWindow(filteredConversations, conversationWindowSize);
 
   // Get initials for avatar
   const getInitials = (name: string) => {
@@ -1424,6 +1427,7 @@ export default function ChatPage() {
             onValueChange={(profileId) => {
               conversationRequestRef.current += 1;
               messageRequestRef.current += 1;
+              setConversationWindowSize(CONVERSATION_WINDOW_STEP);
               setConversationsLoading(true);
               setSelectedProfile(profileId);
             }}
@@ -1452,7 +1456,10 @@ export default function ChatPage() {
                 ref={conversationSearchRef}
                 placeholder="Search conversations"
                 value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
+                onChange={e => {
+                  setSearchQuery(e.target.value);
+                  setConversationWindowSize(CONVERSATION_WINDOW_STEP);
+                }}
                 className="h-9 pl-10 border-0 rounded-lg bg-white dark:bg-[#202c33] shadow-none focus-visible:ring-1"
               />
             </div>
@@ -1577,8 +1584,17 @@ export default function ChatPage() {
               </div>
             ))}
             {hiddenConversationCount > 0 && (
-              <div className="border-t border-[#e9edef] px-4 py-3 text-center text-xs text-muted-foreground dark:border-[#202c33]">
-                {hiddenConversationCount.toLocaleString()} older conversations hidden. Search above to find them.
+              <div className="border-t border-[#e9edef] px-4 py-3 text-center dark:border-[#202c33]">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="w-full text-xs text-[#008069] dark:text-[#00a884]"
+                  onClick={() => setConversationWindowSize(current => getNextVisibleLimit(current, filteredConversations.length, CONVERSATION_WINDOW_STEP))}
+                  aria-label={`Load more conversations. ${hiddenConversationCount} remaining`}
+                >
+                  Load more conversations ({hiddenConversationCount.toLocaleString()} remaining)
+                </Button>
               </div>
             )}
             </>
@@ -1743,7 +1759,8 @@ export default function ChatPage() {
                     className={`${startsNewDay(messages, idx) || position === 'single' || position === 'first' ? 'mt-1.5' : 'mt-[2px]'} rounded-lg focus:outline-none`}
                     data-group-position={position}
                     data-message-id={msg.id}
-                    tabIndex={readOnly ? -1 : 0}
+                    role="article"
+                    tabIndex={0}
                     aria-label={getAccessibleMessageLabel(
                       msg.direction === 'outgoing' ? 'You' : getMessageSenderLabel(msg),
                       getMessagePreview(msg),
@@ -1751,12 +1768,11 @@ export default function ChatPage() {
                     )}
                     onFocus={() => setFocusedMessageId(msg.id)}
                     onKeyDown={event => {
-                      if (readOnly) return;
                       if (event.key === 'ArrowUp') { event.preventDefault(); focusMessageAt(Math.max(0, idx - 1)); }
                       else if (event.key === 'ArrowDown') { event.preventDefault(); focusMessageAt(Math.min(messages.length - 1, idx + 1)); }
                       else if (event.key === 'Home') { event.preventDefault(); focusMessageAt(0); }
                       else if (event.key === 'End') { event.preventDefault(); focusMessageAt(messages.length - 1); }
-                      else if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') { event.preventDefault(); setActiveMessageMenu(msg.id); }
+                      else if (!readOnly && ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu')) { event.preventDefault(); setActiveMessageMenu(msg.id); }
                     }}
                     onPointerDown={event => {
                       if (readOnly) return;

@@ -16,6 +16,10 @@ export function getVisibleWindow<T>(items: T[], limit: number) {
   };
 }
 
+export function getNextVisibleLimit(current: number, total: number, step: number) {
+  return Math.min(total, current + step);
+}
+
 export function isReadOnlyChatMode(value: string | null) {
   return value === '1';
 }
