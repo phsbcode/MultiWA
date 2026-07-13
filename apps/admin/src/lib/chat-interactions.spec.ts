@@ -1,10 +1,55 @@
 import { describe, expect, it, vi } from 'vitest';
-import { applyLiveTimelineUpdate, createLongPressController, getVisibleWindow, resolveChatShortcut, shouldSendTypingStop } from './chat-interactions';
+import { applyLiveTimelineUpdate, createLongPressController, getAccessibleMessageLabel, getCenteredScrollTop, getNextVisibleLimit, getVisibleWindow, isReadOnlyChatMode, resolveChatShortcut, scrollTimelineToBottom, shouldLoadOlderMessages, shouldMarkConversationRead, shouldSendTypingStop } from './chat-interactions';
 
 describe('getVisibleWindow', () => {
   it('caps large lists and reports the hidden count', () => {
     const items = Array.from({ length: 300 }, (_, index) => index);
     expect(getVisibleWindow(items, 250)).toEqual({ items: items.slice(0, 250), hiddenCount: 50 });
+  });
+
+  it('grows the visible limit in bounded steps', () => {
+    expect(getNextVisibleLimit(80, 267, 80)).toBe(160);
+    expect(getNextVisibleLimit(240, 267, 80)).toBe(267);
+    expect(getNextVisibleLimit(267, 267, 80)).toBe(267);
+  });
+});
+
+describe('read-only chat decisions', () => {
+  it('enables read-only mode only for the explicit URL value', () => {
+    expect(isReadOnlyChatMode('1')).toBe(true);
+    expect(isReadOnlyChatMode('true')).toBe(false);
+    expect(isReadOnlyChatMode(null)).toBe(false);
+  });
+
+  it('never marks a conversation read in read-only mode', () => {
+    expect(shouldMarkConversationRead({ readOnly: true, isDraft: false, unreadCount: 8 })).toBe(false);
+    expect(shouldMarkConversationRead({ readOnly: false, isDraft: false, unreadCount: 8 })).toBe(true);
+  });
+
+  it('waits for initial bottom positioning before loading older messages', () => {
+    expect(shouldLoadOlderMessages({ scrollTop: 0, initialScrollSettled: false, messagesLoading: false, olderMessagesLoading: false })).toBe(false);
+    expect(shouldLoadOlderMessages({ scrollTop: 0, initialScrollSettled: true, messagesLoading: false, olderMessagesLoading: false })).toBe(true);
+    expect(shouldLoadOlderMessages({ scrollTop: 0, initialScrollSettled: true, messagesLoading: true, olderMessagesLoading: false })).toBe(false);
+  });
+});
+
+describe('timeline accessibility and scrolling', () => {
+  it('scrolls only the timeline container to the bottom', () => {
+    const timeline = { scrollTop: 0, scrollHeight: 1200 };
+    scrollTimelineToBottom(timeline);
+    expect(timeline.scrollTop).toBe(1200);
+  });
+
+  it('centers a search result relative to the timeline container', () => {
+    expect(getCenteredScrollTop({ elementOffsetTop: 900, elementHeight: 80, containerHeight: 600 })).toBe(640);
+    expect(getCenteredScrollTop({ elementOffsetTop: 100, elementHeight: 40, containerHeight: 600 })).toBe(0);
+  });
+
+  it('bounds message content exposed through the accessibility tree', () => {
+    const label = getAccessibleMessageLabel('Sender', 'x'.repeat(500), '10:30 AM');
+    expect(label.length).toBeLessThanOrEqual(200);
+    expect(label).toContain('Sender');
+    expect(label).toContain('10:30 AM');
   });
 });
 

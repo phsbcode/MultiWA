@@ -4,12 +4,13 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import { getSocketUrl } from '@/lib/socket';
 import { api, Profile, Conversation, Contact } from '@/lib/api';
 import { groupChatMessages } from '@/lib/chat-message-grouping';
 import { applyPresenceEvent, expireTransientPresence, getPresenceLabel, type ChatPresenceEvent, type PresenceRecords } from '@/lib/chat-presence';
-import { applyLiveTimelineUpdate, createLongPressController, getVisibleWindow, resolveChatShortcut, shouldSendTypingStop } from '@/lib/chat-interactions';
+import { applyLiveTimelineUpdate, createLongPressController, getAccessibleMessageLabel, getCenteredScrollTop, getNextVisibleLimit, getVisibleWindow, isReadOnlyChatMode, resolveChatShortcut, scrollTimelineToBottom, shouldLoadOlderMessages, shouldMarkConversationRead, shouldSendTypingStop } from '@/lib/chat-interactions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -52,6 +53,8 @@ interface PendingAttachment {
   objectUrl: string;
   type: 'image' | 'video' | 'audio' | 'document';
 }
+
+const CONVERSATION_WINDOW_STEP = 80;
 
 const MESSAGE_PAGE_SIZE = 40;
 
@@ -267,6 +270,10 @@ const MessageStatus = ({ status }: { status: string }) => {
 
 export default function ChatPage() {
   const { toast } = useToast();
+  const searchParams = useSearchParams();
+  const readOnly = isReadOnlyChatMode(searchParams.get('readOnly'));
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
   const [loading, setLoading] = useState(true);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<string>('');
@@ -312,6 +319,7 @@ export default function ChatPage() {
   const [messageSearchNextCursor, setMessageSearchNextCursor] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [conversationWindowSize, setConversationWindowSize] = useState(CONVERSATION_WINDOW_STEP);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showThreeDotMenu, setShowThreeDotMenu] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
@@ -335,6 +343,7 @@ export default function ChatPage() {
   const conversationRequestRef = useRef(0);
   const messageRequestRef = useRef(0);
   const olderMessagesRequestRef = useRef(false);
+  const initialScrollSettledRef = useRef(false);
   const previousLastMessageIdRef = useRef<string | null>(null);
   const retryingMessageRef = useRef<string | null>(null);
   const selectedConversationRef = useRef<Conversation | null>(null);
@@ -387,6 +396,20 @@ export default function ChatPage() {
     },
   );
   const conversationSubtitle = presenceLabel || getConversationSubtitle(selectedConversation);
+  const scrollMessageIntoTimeline = (element: HTMLDivElement, behavior: ScrollBehavior = 'smooth') => {
+    const timeline = messagesContainerRef.current;
+    if (!timeline) return;
+    const timelineRect = timeline.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    timeline.scrollTo({
+      top: getCenteredScrollTop({
+        elementOffsetTop: timeline.scrollTop + elementRect.top - timelineRect.top,
+        elementHeight: elementRect.height,
+        containerHeight: timeline.clientHeight,
+      }),
+      behavior,
+    });
+  };
 
   useEffect(() => {
     loadProfiles();
@@ -429,7 +452,7 @@ export default function ChatPage() {
     if (!activeSearchMessageId || !selectedConversation || !selectedProfile) return;
     const loadedElement = messageElementRefs.current.get(activeSearchMessageId);
     if (loadedElement) {
-      loadedElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      scrollMessageIntoTimeline(loadedElement);
       return;
     }
 
@@ -442,7 +465,8 @@ export default function ChatPage() {
         return response.data?.messages || [];
       });
       window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-        messageElementRefs.current.get(activeSearchMessageId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const element = messageElementRefs.current.get(activeSearchMessageId);
+        if (element) scrollMessageIntoTimeline(element);
       }));
     }).catch(() => {
       if (requestId === messageContextRequestRef.current) setMessageSearchError('Could not load message context');
@@ -555,7 +579,7 @@ export default function ChatPage() {
           // If this message belongs to the currently open conversation, 
           // mark it as read immediately so badge doesn't increment
           setSelectedConversation(current => {
-            if (current && msg.conversationId === current.id) {
+            if (!readOnly && current && msg.conversationId === current.id) {
               api.markAsRead(current.id).catch(() => {});
               // Also clear badge in conversation list
               setConversations(prev => prev.map(c =>
@@ -573,7 +597,7 @@ export default function ChatPage() {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [selectedProfile]);
+  }, [selectedProfile, readOnly]);
 
   useEffect(() => {
     setPresenceRecords({});
@@ -590,10 +614,10 @@ export default function ChatPage() {
       typingStopTimeoutRef.current = null;
     }
     lastTypingSentRef.current = 0;
-    if (clearRemoteTyping && selectedProfile && selectedConversation) {
+    if (!readOnlyRef.current && clearRemoteTyping && selectedProfile && selectedConversation) {
       api.sendTyping({ profileId: selectedProfile, to: selectedConversation.jid, state: 'available' }).catch(() => {});
     }
-  }, [selectedProfile, selectedConversation?.id]);
+  }, [readOnly, selectedProfile, selectedConversation?.id]);
 
   useEffect(() => {
     if (selectedProfile) {
@@ -639,14 +663,19 @@ export default function ChatPage() {
       setOlderMessagesLoading(false);
       setIsAtBottom(true);
       setNewMessagesBelow(0);
+      initialScrollSettledRef.current = false;
       previousLastMessageIdRef.current = null;
       if (selectedConversation.id.startsWith('draft:')) {
         setMessagesLoading(false);
       } else {
         loadMessages(selectedConversation.id);
       }
-      // Mark as read when opening a conversation
-      if (!selectedConversation.id.startsWith('draft:') && selectedConversation.unreadCount > 0) {
+      // Mark as read when opening a conversation unless this is an explicitly read-only session.
+      if (shouldMarkConversationRead({
+        readOnly,
+        isDraft: selectedConversation.id.startsWith('draft:'),
+        unreadCount: selectedConversation.unreadCount,
+      })) {
         api.markAsRead(selectedConversation.id).catch(() => {});
         // Clear unread badge in local state
         setConversations(prev => prev.map(c =>
@@ -655,7 +684,7 @@ export default function ChatPage() {
         setSelectedConversation(prev => prev ? { ...prev, unreadCount: 0 } : prev);
       }
     }
-  }, [selectedConversation?.id]);
+  }, [selectedConversation?.id, readOnly]);
 
   useEffect(() => {
     const container = messagesContainerRef.current;
@@ -674,7 +703,15 @@ export default function ChatPage() {
   }, [messages, messagesLoading]);
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
-    messagesEndRef.current?.scrollIntoView({ behavior });
+    const timeline = messagesContainerRef.current;
+    if (behavior === 'smooth' && timeline?.scrollTo) {
+      timeline.scrollTo({ top: timeline.scrollHeight, behavior });
+    } else {
+      scrollTimelineToBottom(timeline);
+    }
+    requestAnimationFrame(() => {
+      initialScrollSettledRef.current = true;
+    });
     setIsAtBottom(true);
     setNewMessagesBelow(0);
   };
@@ -807,7 +844,7 @@ export default function ChatPage() {
   };
 
   const handleSend = async () => {
-    if (!messageInput.trim() || !selectedConversation || sending) return;
+    if (readOnly || !messageInput.trim() || !selectedConversation || sending) return;
 
     setSending(true);
     const tempId = `temp-${Date.now()}`;
@@ -890,7 +927,7 @@ export default function ChatPage() {
   };
 
   const handleRetryMessage = async (message: Message) => {
-    if (!selectedConversation || message.status !== 'failed' || retryingMessageRef.current) return;
+    if (readOnly || !selectedConversation || message.status !== 'failed' || retryingMessageRef.current) return;
 
     retryingMessageRef.current = message.id;
     setRetryingMessageId(message.id);
@@ -927,6 +964,7 @@ export default function ChatPage() {
   };
 
   const handleAttachmentSelected = (file: File) => {
+    if (readOnly) return;
     const allowedMimes = new Set([
       'image/jpeg', 'image/png', 'image/gif', 'image/webp',
       'video/mp4', 'video/quicktime', 'video/webm',
@@ -959,7 +997,7 @@ export default function ChatPage() {
   };
 
   const handleAttachmentSend = async () => {
-    if (!pendingAttachment || !selectedConversation || !selectedProfile || attachmentSending) return;
+    if (readOnly || !pendingAttachment || !selectedConversation || !selectedProfile || attachmentSending) return;
 
     const { file, type, objectUrl } = pendingAttachment;
     const tempId = attachmentTempMessageId || `temp-attachment-${Date.now()}`;
@@ -1019,7 +1057,7 @@ export default function ChatPage() {
 
   // Clear chat messages (persistent — calls backend API)
   const handleClearChat = async () => {
-    if (!selectedConversation) return;
+    if (readOnly || !selectedConversation) return;
     if (!window.confirm('Are you sure you want to clear this chat? This action cannot be undone.')) return;
     try {
       await api.clearConversationMessages(selectedConversation.id);
@@ -1032,7 +1070,7 @@ export default function ChatPage() {
 
   // Toggle mute (persistent)
   const handleToggleMute = async () => {
-    if (!selectedConversation) return;
+    if (readOnly || !selectedConversation) return;
     try {
       const res = await api.muteConversation(selectedConversation.id);
       if (res.data) {
@@ -1049,7 +1087,7 @@ export default function ChatPage() {
 
   // Toggle pin (persistent)
   const handleTogglePin = async () => {
-    if (!selectedConversation) return;
+    if (readOnly || !selectedConversation) return;
     try {
       const res = await api.pinConversation(selectedConversation.id);
       if (res.data) {
@@ -1070,6 +1108,7 @@ export default function ChatPage() {
   };
 
   const handleReaction = async (message: Message, emoji: string) => {
+    if (readOnly) return;
     const previousReactions = message.reactions || [];
     setReactionPickerMessage(null);
     setActiveMessageMenu(null);
@@ -1159,6 +1198,7 @@ export default function ChatPage() {
       const focusedMessage = messages.find(message => message.id === focusedMessageId);
       const action = resolveChatShortcut(event, Boolean(focusedMessage), inputRef.current);
       if (!action) return;
+      if (readOnly && ['send-message', 'reply-focused', 'delete-focused'].includes(action)) return;
       event.preventDefault();
 
       if (action === 'open-message-search') {
@@ -1193,10 +1233,10 @@ export default function ChatPage() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeMessageMenu, actionSheetMessage, attachmentSending, currentSearchIndex, focusedMessageId, messageSearchHasMore, messageSearchLoading, messageSearchMatches.length, messageSearchNextCursor, messageSearchQuery, messages, pendingAttachment, reactionPickerMessage, selectedConversation, selectedProfile, showAttachMenu, showDeleteConfirm, showEmojiPicker, showMessageSearch]);
+  }, [activeMessageMenu, actionSheetMessage, attachmentSending, currentSearchIndex, focusedMessageId, messageSearchHasMore, messageSearchLoading, messageSearchMatches.length, messageSearchNextCursor, messageSearchQuery, messages, pendingAttachment, reactionPickerMessage, readOnly, selectedConversation, selectedProfile, showAttachMenu, showDeleteConfirm, showEmojiPicker, showMessageSearch]);
 
   const openNewChatPanel = async () => {
-    if (!selectedProfile || newChatLoading) return;
+    if (readOnly || !selectedProfile || newChatLoading) return;
     setShowNewChat(true);
     setNewChatQuery('');
     setNewChatError(null);
@@ -1213,7 +1253,7 @@ export default function ChatPage() {
   };
 
   const startChatWithPhone = async (phoneInput: string, name?: string, contactId?: string) => {
-    if (!selectedProfile || startingNewChatRef.current) return;
+    if (readOnly || !selectedProfile || startingNewChatRef.current) return;
     const phone = normalizeNewChatPhone(phoneInput);
     if (!isValidInternationalPhone(phone)) {
       setNewChatError('Enter a valid international phone number');
@@ -1299,7 +1339,7 @@ export default function ChatPage() {
       if (aPinned !== bPinned) return bPinned - aPinned;
       return 0; // keep original order for un-pinned
     });
-  const { items: visibleConversations, hiddenCount: hiddenConversationCount } = getVisibleWindow(filteredConversations, 250);
+  const { items: visibleConversations, hiddenCount: hiddenConversationCount } = getVisibleWindow(filteredConversations, conversationWindowSize);
 
   // Get initials for avatar
   const getInitials = (name: string) => {
@@ -1308,7 +1348,7 @@ export default function ChatPage() {
 
   // Handle delete message
   const handleDeleteMessage = async (messageId: string) => {
-    if (!selectedProfile || !selectedConversation) return;
+    if (readOnly || !selectedProfile || !selectedConversation) return;
     setDeletingMessageId(messageId);
     try {
       const res = await api.deleteForEveryone(selectedProfile, selectedConversation.jid, messageId);
@@ -1327,7 +1367,7 @@ export default function ChatPage() {
 
   // Handle schedule message
   const handleScheduleMessage = async () => {
-    if (!messageInput.trim() || !scheduleDateTime || !selectedProfile || !selectedConversation) return;
+    if (readOnly || !messageInput.trim() || !scheduleDateTime || !selectedProfile || !selectedConversation) return;
     setScheduling(true);
     try {
       const scheduledAt = new Date(scheduleDateTime).toISOString();
@@ -1362,7 +1402,7 @@ export default function ChatPage() {
   // Render loading skeleton
   if (loading) {
     return (
-      <div className="h-[calc(100dvh-112px)] min-h-[560px] flex">
+      <div className="h-[calc(100dvh-112px)] min-h-0 flex">
         <div className="w-full md:w-[360px] border-r border-border p-4 space-y-4">
           <Skeleton className="h-10 w-full" />
           {[1, 2, 3, 4, 5].map(i => (
@@ -1377,7 +1417,7 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="h-[calc(100dvh-112px)] min-h-[560px] flex bg-[#f7f8fa] dark:bg-[#111b21] border border-border overflow-hidden shadow-sm">
+    <div className="h-[calc(100dvh-112px)] min-h-0 flex bg-[#f7f8fa] dark:bg-[#111b21] border border-border overflow-hidden shadow-sm">
       {/* Conversation Sidebar */}
       <div className={`${selectedConversation ? 'hidden md:flex' : 'flex'} w-full md:w-[360px] lg:w-[400px] shrink-0 border-r border-[#e9edef] dark:border-[#2a3942] flex-col bg-white dark:bg-[#111b21]`}>
         {/* Sidebar Header */}
@@ -1387,6 +1427,7 @@ export default function ChatPage() {
             onValueChange={(profileId) => {
               conversationRequestRef.current += 1;
               messageRequestRef.current += 1;
+              setConversationWindowSize(CONVERSATION_WINDOW_STEP);
               setConversationsLoading(true);
               setSelectedProfile(profileId);
             }}
@@ -1415,11 +1456,14 @@ export default function ChatPage() {
                 ref={conversationSearchRef}
                 placeholder="Search conversations"
                 value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
+                onChange={e => {
+                  setSearchQuery(e.target.value);
+                  setConversationWindowSize(CONVERSATION_WINDOW_STEP);
+                }}
                 className="h-9 pl-10 border-0 rounded-lg bg-white dark:bg-[#202c33] shadow-none focus-visible:ring-1"
               />
             </div>
-            <Button type="button" variant="ghost" size="sm" onClick={openNewChatPanel} className="h-9 w-9 shrink-0 rounded-full bg-white p-0 text-[#008069] dark:bg-[#202c33] dark:text-[#00a884]" aria-label="New chat">
+            <Button type="button" variant="ghost" size="sm" onClick={openNewChatPanel} disabled={readOnly} className="h-9 w-9 shrink-0 rounded-full bg-white p-0 text-[#008069] dark:bg-[#202c33] dark:text-[#00a884]" aria-label={readOnly ? 'New chat disabled in read-only mode' : 'New chat'}>
               <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h8m-4-4v8m8-2a8 8 0 11-3.5-6.6L20 4v5h-5l1.8-1.8" /></svg>
             </Button>
           </div>
@@ -1427,7 +1471,7 @@ export default function ChatPage() {
 
         {/* Conversation List */}
         <div className="flex-1 overflow-y-auto">
-          {showNewChat ? (
+          {!readOnly && showNewChat ? (
             <div className="min-h-full bg-white dark:bg-[#111b21]">
               <div className="flex h-14 items-center gap-3 border-b border-[#e9edef] px-3 dark:border-[#202c33]">
                 <Button variant="ghost" size="sm" className="h-9 w-9 p-0" onClick={() => { setShowNewChat(false); setNewChatError(null); }} aria-label="Back to conversations">
@@ -1516,13 +1560,13 @@ export default function ChatPage() {
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between">
-                    <h4 className="font-medium text-foreground truncate flex items-center gap-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <h4 className="min-w-0 flex-1 truncate font-medium text-foreground flex items-center gap-1">
                       {(conv as any).metadata?.isPinned && <span className="text-xs">📌</span>}
                       {getDisplayName(conv)}
                       {(conv as any).metadata?.isMuted && <span className="text-xs opacity-60">🔇</span>}
                     </h4>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="shrink-0 text-xs text-muted-foreground">
                       {conv.lastMessageAt ? formatTime(conv.lastMessageAt) : ''}
                     </span>
                   </div>
@@ -1540,8 +1584,17 @@ export default function ChatPage() {
               </div>
             ))}
             {hiddenConversationCount > 0 && (
-              <div className="border-t border-[#e9edef] px-4 py-3 text-center text-xs text-muted-foreground dark:border-[#202c33]">
-                {hiddenConversationCount.toLocaleString()} older conversations hidden. Search above to find them.
+              <div className="border-t border-[#e9edef] px-4 py-3 text-center dark:border-[#202c33]">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="w-full text-xs text-[#008069] dark:text-[#00a884]"
+                  onClick={() => setConversationWindowSize(current => getNextVisibleLimit(current, filteredConversations.length, CONVERSATION_WINDOW_STEP))}
+                  aria-label={`Load more conversations. ${hiddenConversationCount} remaining`}
+                >
+                  Load more conversations ({hiddenConversationCount.toLocaleString()} remaining)
+                </Button>
               </div>
             )}
             </>
@@ -1583,33 +1636,42 @@ export default function ChatPage() {
               >
                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35m1.35-5.65a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
               </Button>
-              <div className="relative">
-                <Button variant="ghost" size="sm" onClick={() => setShowThreeDotMenu(!showThreeDotMenu)}>
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
-                  </svg>
-                </Button>
-                {showThreeDotMenu && (
-                  <div className="absolute right-0 top-10 bg-card border border-border rounded-xl shadow-lg py-1 z-20 w-48">
-                    <button onClick={() => { setShowThreeDotMenu(false); setShowContactInfo(!showContactInfo); }} className="w-full px-4 py-2.5 text-sm text-left hover:bg-secondary flex items-center gap-3">
-                      <span>👤</span> Contact Info
-                    </button>
-                    <button onClick={() => { setShowThreeDotMenu(false); handleToggleMute(); }} className="w-full px-4 py-2.5 text-sm text-left hover:bg-secondary flex items-center gap-3">
-                      <span>{(selectedConversation as any)?.metadata?.isMuted ? '🔔' : '🔇'}</span>
-                      {(selectedConversation as any)?.metadata?.isMuted ? 'Unmute Notifications' : 'Mute Notifications'}
-                    </button>
-                    <button onClick={() => { setShowThreeDotMenu(false); handleTogglePin(); }} className="w-full px-4 py-2.5 text-sm text-left hover:bg-secondary flex items-center gap-3">
-                      <span>📌</span>
-                      {(selectedConversation as any)?.metadata?.isPinned ? 'Unpin Chat' : 'Pin Chat'}
-                    </button>
-                    <hr className="my-1 border-border" />
-                    <button onClick={() => { setShowThreeDotMenu(false); handleClearChat(); }} className="w-full px-4 py-2.5 text-sm text-left hover:bg-secondary text-red-500 flex items-center gap-3">
-                      <span>🗑️</span> Clear Chat
-                    </button>
-                  </div>
-                )}
-              </div>
+              {!readOnly && (
+                <div className="relative">
+                  <Button variant="ghost" size="sm" onClick={() => setShowThreeDotMenu(!showThreeDotMenu)} aria-label="Conversation actions">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+                    </svg>
+                  </Button>
+                  {showThreeDotMenu && (
+                    <div className="absolute right-0 top-10 bg-card border border-border rounded-xl shadow-lg py-1 z-20 w-48">
+                      <button onClick={() => { setShowThreeDotMenu(false); setShowContactInfo(!showContactInfo); }} className="w-full px-4 py-2.5 text-sm text-left hover:bg-secondary flex items-center gap-3">
+                        <span>👤</span> Contact Info
+                      </button>
+                      <button onClick={() => { setShowThreeDotMenu(false); handleToggleMute(); }} className="w-full px-4 py-2.5 text-sm text-left hover:bg-secondary flex items-center gap-3">
+                        <span>{(selectedConversation as any)?.metadata?.isMuted ? '🔔' : '🔇'}</span>
+                        {(selectedConversation as any)?.metadata?.isMuted ? 'Unmute Notifications' : 'Mute Notifications'}
+                      </button>
+                      <button onClick={() => { setShowThreeDotMenu(false); handleTogglePin(); }} className="w-full px-4 py-2.5 text-sm text-left hover:bg-secondary flex items-center gap-3">
+                        <span>📌</span>
+                        {(selectedConversation as any)?.metadata?.isPinned ? 'Unpin Chat' : 'Pin Chat'}
+                      </button>
+                      <hr className="my-1 border-border" />
+                      <button onClick={() => { setShowThreeDotMenu(false); handleClearChat(); }} className="w-full px-4 py-2.5 text-sm text-left hover:bg-secondary text-red-500 flex items-center gap-3">
+                        <span>🗑️</span> Clear Chat
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
+
+            {readOnly && (
+              <div className="flex items-center justify-center gap-2 border-b border-[#b7e4d8] bg-[#e7f8f3] px-3 py-1.5 text-xs font-medium text-[#047857] dark:border-[#245c50] dark:bg-[#12372f] dark:text-[#6ee7b7]" role="status" aria-live="polite">
+                <span aria-hidden="true">🔒</span>
+                Read-only mode — navigation and search are available; all mutations are disabled
+              </div>
+            )}
 
             {showMessageSearch && (
               <div className="flex h-12 items-center gap-2 border-b border-[#d8dcdf] bg-white px-3 dark:border-[#2a3942] dark:bg-[#202c33]">
@@ -1651,7 +1713,12 @@ export default function ChatPage() {
                 const atBottom = distanceFromBottom < 100;
                 setIsAtBottom(atBottom);
                 if (atBottom) setNewMessagesBelow(0);
-                if (event.currentTarget.scrollTop < 80) loadOlderMessages();
+                if (shouldLoadOlderMessages({
+                  scrollTop: event.currentTarget.scrollTop,
+                  initialScrollSettled: initialScrollSettledRef.current,
+                  messagesLoading,
+                  olderMessagesLoading,
+                })) loadOlderMessages();
               }}
               style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' viewBox=\'0 0 60 60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' fill-rule=\'evenodd\'%3E%3Cg fill=\'%239C92AC\' fill-opacity=\'0.03\'%3E%3Cpath d=\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")' }}
             >
@@ -1692,17 +1759,23 @@ export default function ChatPage() {
                     className={`${startsNewDay(messages, idx) || position === 'single' || position === 'first' ? 'mt-1.5' : 'mt-[2px]'} rounded-lg focus:outline-none`}
                     data-group-position={position}
                     data-message-id={msg.id}
+                    role="article"
                     tabIndex={0}
-                    aria-label={`${msg.direction === 'outgoing' ? 'You' : getMessageSenderLabel(msg)}: ${getMessagePreview(msg)}, ${formatTime(msg.timestamp)}`}
+                    aria-label={getAccessibleMessageLabel(
+                      msg.direction === 'outgoing' ? 'You' : getMessageSenderLabel(msg),
+                      getMessagePreview(msg),
+                      formatTime(msg.timestamp),
+                    )}
                     onFocus={() => setFocusedMessageId(msg.id)}
                     onKeyDown={event => {
                       if (event.key === 'ArrowUp') { event.preventDefault(); focusMessageAt(Math.max(0, idx - 1)); }
                       else if (event.key === 'ArrowDown') { event.preventDefault(); focusMessageAt(Math.min(messages.length - 1, idx + 1)); }
                       else if (event.key === 'Home') { event.preventDefault(); focusMessageAt(0); }
                       else if (event.key === 'End') { event.preventDefault(); focusMessageAt(messages.length - 1); }
-                      else if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') { event.preventDefault(); setActiveMessageMenu(msg.id); }
+                      else if (!readOnly && ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu')) { event.preventDefault(); setActiveMessageMenu(msg.id); }
                     }}
                     onPointerDown={event => {
+                      if (readOnly) return;
                       if (event.pointerType !== 'touch' || (event.target as HTMLElement).closest('a,button,input,textarea,audio,video')) return;
                       longPressControllerRef.current?.start(event.clientX, event.clientY, msg);
                     }}
@@ -1710,6 +1783,7 @@ export default function ChatPage() {
                     onPointerUp={() => longPressControllerRef.current?.end()}
                     onPointerCancel={() => longPressControllerRef.current?.cancel()}
                     onContextMenu={event => {
+                      if (readOnly) return;
                       if ((event.target as HTMLElement).closest('a,button,input,textarea,audio,video')) return;
                       event.preventDefault();
                       if (window.matchMedia('(pointer: coarse)').matches) setActionSheetMessage(msg);
@@ -1728,14 +1802,17 @@ export default function ChatPage() {
                     <div className={`flex group ${msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}>
                     <div className="relative self-center mx-1">
                       <button
+                        type="button"
+                        disabled={readOnly}
+                        tabIndex={-1}
+                        aria-hidden="true"
                         onClick={() => setActiveMessageMenu(activeMessageMenu === msg.id ? null : msg.id)}
-                        className="rounded-full p-1.5 opacity-100 text-muted-foreground transition-opacity hover:bg-black/5 focus:opacity-100 md:opacity-0 md:group-hover:opacity-100 dark:hover:bg-white/10"
-                        aria-label="Message actions"
-                        aria-expanded={activeMessageMenu === msg.id}
+                        className={`${readOnly ? 'hidden' : ''} rounded-full p-1.5 opacity-100 text-muted-foreground transition-opacity hover:bg-black/5 focus:opacity-100 md:opacity-0 md:group-hover:opacity-100 dark:hover:bg-white/10`}
+                        aria-expanded={readOnly ? undefined : activeMessageMenu === msg.id}
                       >
                         <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                       </button>
-                      {activeMessageMenu === msg.id && (
+                      {!readOnly && activeMessageMenu === msg.id && (
                         <div role="menu" className="absolute left-0 top-8 z-30 w-44 overflow-hidden rounded-lg border border-border bg-white py-1 shadow-xl dark:bg-[#233138]">
                           <button role="menuitem" onClick={() => { setReplyTo(msg); setActiveMessageMenu(null); inputRef.current?.focus(); }} className="w-full px-4 py-2 text-left text-sm hover:bg-secondary">Reply</button>
                           <button role="menuitem" onClick={() => { setReactionPickerMessage(msg); setActiveMessageMenu(null); }} className="w-full px-4 py-2 text-left text-sm hover:bg-secondary">React</button>
@@ -1745,7 +1822,7 @@ export default function ChatPage() {
                           )}
                         </div>
                       )}
-                      {reactionPickerMessage?.id === msg.id && (
+                      {!readOnly && reactionPickerMessage?.id === msg.id && (
                         <div className="absolute left-0 top-8 z-30 flex gap-1 rounded-full border border-border bg-white p-1.5 shadow-xl dark:bg-[#233138]">
                           {['👍', '❤️', '😂', '😮', '😢', '🙏'].map(emoji => (
                             <button key={emoji} onClick={() => handleReaction(msg, emoji)} className="flex h-8 w-8 items-center justify-center rounded-full text-lg hover:bg-secondary" aria-label={`React with ${emoji}`}>{emoji}</button>
@@ -1753,7 +1830,7 @@ export default function ChatPage() {
                         </div>
                       )}
                     </div>
-                    {showDeleteConfirm === (msg.messageId || msg.id) && (
+                    {!readOnly && showDeleteConfirm === (msg.messageId || msg.id) && (
                       <div className="self-center flex items-center gap-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-border p-1">
                         <button onClick={() => handleDeleteMessage(msg.messageId || msg.id)} disabled={deletingMessageId === (msg.messageId || msg.id)} className="text-xs px-2 py-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors">{deletingMessageId === (msg.messageId || msg.id) ? '...' : 'Delete'}</button>
                         <button onClick={() => setShowDeleteConfirm(null)} className="text-xs px-2 py-1 text-muted-foreground hover:bg-secondary rounded transition-colors">Cancel</button>
@@ -1975,7 +2052,7 @@ export default function ChatPage() {
                         <span className="text-[10px] leading-3 text-[#667781] dark:text-[#8696a0]">
                           {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
-                        {msg.direction === 'outgoing' && msg.type === 'text' && msg.status === 'failed' ? (
+                        {!readOnly && msg.direction === 'outgoing' && msg.type === 'text' && msg.status === 'failed' ? (
                           <button
                             type="button"
                             onClick={() => handleRetryMessage(msg)}
@@ -2025,6 +2102,11 @@ export default function ChatPage() {
             )}
 
             {/* Message Input */}
+            {readOnly ? (
+              <div className="border-t border-[#d8dcdf] bg-[#f0f2f5] px-4 py-3 text-center text-sm text-[#54656f] dark:border-[#2a3942] dark:bg-[#202c33] dark:text-[#aebac1]">
+                Message composer disabled in read-only mode
+              </div>
+            ) : (
             <div className="px-2.5 md:px-4 py-2 border-t border-[#d8dcdf] dark:border-[#2a3942] bg-[#f0f2f5] dark:bg-[#202c33]">
               {replyTo && (
                 <div className="mb-2 ml-11 md:ml-20 flex items-center gap-2 rounded-lg bg-white dark:bg-[#2a3942] px-3 py-2 shadow-sm">
@@ -2250,7 +2332,8 @@ export default function ChatPage() {
                 </Button>
               </div>
             </div>
-            {actionSheetMessage && (
+            )}
+            {!readOnly && actionSheetMessage && (
               <div className="fixed inset-0 z-[120] flex items-end bg-black/40 md:hidden" role="dialog" aria-modal="true" aria-label="Message actions" onClick={() => setActionSheetMessage(null)}>
                 <div
                   className="max-h-[85vh] w-full overflow-y-auto rounded-t-3xl bg-white px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 shadow-2xl dark:bg-[#202c33]"
@@ -2284,7 +2367,7 @@ export default function ChatPage() {
                 </div>
               </div>
             )}
-            {pendingAttachment && (
+            {!readOnly && pendingAttachment && (
               <div className="fixed inset-0 z-[100] flex flex-col bg-[#f0f2f5] dark:bg-[#111b21] md:absolute md:z-50" role="dialog" aria-modal="true" aria-label="Attachment preview">
                 <div className="flex h-[60px] items-center gap-3 border-b border-[#d8dcdf] bg-white px-3 dark:border-[#2a3942] dark:bg-[#202c33]">
                   <Button variant="ghost" size="sm" className="h-9 w-9 p-0" onClick={clearAttachmentPreview} disabled={attachmentSending} aria-label="Cancel attachment">
