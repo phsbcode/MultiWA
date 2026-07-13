@@ -124,6 +124,20 @@ const getLastMessagePreview = (lastMessage: any) => {
   }
 };
 
+const getAccessibleConversationLabel = (conversation: Conversation) => {
+  const preview = getLastMessagePreview(conversation.lastMessage);
+  const boundedPreview = preview.length > 80 ? `${preview.slice(0, 79)}…` : preview;
+  const details = [
+    getDisplayName(conversation),
+    (conversation as any).metadata?.isPinned ? 'pinned' : '',
+    (conversation as any).metadata?.isMuted ? 'muted' : '',
+    conversation.lastMessageAt ? formatTime(conversation.lastMessageAt) : '',
+    conversation.unreadCount > 0 ? `${conversation.unreadCount} unread` : '',
+    boundedPreview,
+  ].filter(Boolean);
+  return details.join('. ');
+};
+
 const getMessagePreview = (message: Message) => {
   const text = message.content?.text || message.content?.caption;
   if (text) return sanitizeChatText(text);
@@ -1541,47 +1555,50 @@ export default function ChatPage() {
           ) : (
             <>
             {visibleConversations.map(conv => (
-              <div
+              <button
                 key={conv.id}
+                type="button"
+                aria-label={getAccessibleConversationLabel(conv)}
+                aria-current={selectedConversation?.id === conv.id ? 'true' : undefined}
                 onClick={() => {
                   if (conv.id !== selectedConversation?.id) {
                     messageRequestRef.current += 1;
                     setSelectedConversation(conv);
                   }
                 }}
-                className={`flex items-center gap-3 px-3 py-3 cursor-pointer hover:bg-[#f5f6f6] dark:hover:bg-[#202c33] transition-colors border-b border-[#f0f2f5] dark:border-[#202c33] ${
+                className={`flex w-full items-center gap-3 px-3 py-3 text-left cursor-pointer hover:bg-[#f5f6f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#00a884] dark:hover:bg-[#202c33] transition-colors border-b border-[#f0f2f5] dark:border-[#202c33] ${
                   selectedConversation?.id === conv.id ? 'bg-[#f0f2f5] dark:bg-[#2a3942]' : ''
                 }`}
               >
-                <Avatar className="w-12 h-12">
+                <Avatar aria-hidden="true" className="w-12 h-12">
                   <AvatarImage src={conv.avatar} />
                   <AvatarFallback className="bg-[#25D366] text-white">
                     {getInitials(getDisplayName(conv))}
                   </AvatarFallback>
                 </Avatar>
-                <div className="flex-1 min-w-0">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <h4 className="min-w-0 flex-1 truncate font-medium text-foreground flex items-center gap-1">
+                <span aria-hidden="true" className="flex-1 min-w-0">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate font-medium text-foreground flex items-center gap-1">
                       {(conv as any).metadata?.isPinned && <span className="text-xs">📌</span>}
                       {getDisplayName(conv)}
                       {(conv as any).metadata?.isMuted && <span className="text-xs opacity-60">🔇</span>}
-                    </h4>
+                    </span>
                     <span className="shrink-0 text-xs text-muted-foreground">
                       {conv.lastMessageAt ? formatTime(conv.lastMessageAt) : ''}
                     </span>
-                  </div>
-                  <div className="flex items-center justify-between mt-1">
-                    <p className="text-sm text-muted-foreground truncate flex-1">
+                  </span>
+                  <span className="flex items-center justify-between mt-1">
+                    <span className="text-sm text-muted-foreground truncate flex-1">
                       {getLastMessagePreview(conv.lastMessage)}
-                    </p>
+                    </span>
                     {conv.unreadCount > 0 && (
-                      <Badge className="min-w-5 h-5 justify-center rounded-full bg-[#25D366] text-white text-[11px] px-1.5 ml-2">
+                      <span className="inline-flex min-w-5 h-5 items-center justify-center rounded-full bg-[#25D366] text-white text-[11px] font-semibold px-1.5 ml-2">
                         {conv.unreadCount}
-                      </Badge>
+                      </span>
                     )}
-                  </div>
-                </div>
-              </div>
+                  </span>
+                </span>
+              </button>
             ))}
             {hiddenConversationCount > 0 && (
               <div className="border-t border-[#e9edef] px-4 py-3 text-center dark:border-[#202c33]">
