@@ -16,6 +16,60 @@ export function getVisibleWindow<T>(items: T[], limit: number) {
   };
 }
 
+export function isReadOnlyChatMode(value: string | null) {
+  return value === '1';
+}
+
+export function shouldMarkConversationRead({
+  readOnly,
+  isDraft,
+  unreadCount,
+}: {
+  readOnly: boolean;
+  isDraft: boolean;
+  unreadCount: number;
+}) {
+  return !readOnly && !isDraft && unreadCount > 0;
+}
+
+export function shouldLoadOlderMessages({
+  scrollTop,
+  initialScrollSettled,
+  messagesLoading,
+  olderMessagesLoading,
+}: {
+  scrollTop: number;
+  initialScrollSettled: boolean;
+  messagesLoading: boolean;
+  olderMessagesLoading: boolean;
+}) {
+  return initialScrollSettled && !messagesLoading && !olderMessagesLoading && scrollTop < 80;
+}
+
+export function scrollTimelineToBottom(timeline: { scrollTop: number; scrollHeight: number } | null) {
+  if (timeline) timeline.scrollTop = timeline.scrollHeight;
+}
+
+export function getCenteredScrollTop({
+  elementOffsetTop,
+  elementHeight,
+  containerHeight,
+}: {
+  elementOffsetTop: number;
+  elementHeight: number;
+  containerHeight: number;
+}) {
+  return Math.max(0, elementOffsetTop - (containerHeight / 2) + (elementHeight / 2));
+}
+
+export function getAccessibleMessageLabel(sender: string, preview: string, timestamp: string) {
+  const maxPreviewLength = 140;
+  const boundedPreview = preview.length > maxPreviewLength
+    ? `${preview.slice(0, maxPreviewLength - 1)}…`
+    : preview;
+  return `${sender}: ${boundedPreview}, ${timestamp}`;
+}
+
 export function shouldSendTypingStop(lastTypingSentAt: number, hasPendingTimer: boolean) {
   return lastTypingSentAt > 0 || hasPendingTimer;
 }
