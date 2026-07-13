@@ -56,9 +56,11 @@ export default function MessageChart({ profileId, className }: MessageChartProps
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - 6);
 
-        const res = await api.request<Array<{ period: string; incoming: number; outgoing: number }>>(
-          `/statistics/messages/trend?profileId=${targetProfileId}&granularity=day&startDate=${startDate.toISOString()}&endDate=${endDate.toISOString()}`
-        );
+        const res = await api.getMessageTrend(targetProfileId, {
+          granularity: 'day',
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+        });
 
         if (res.data && res.data.length > 0) {
           const mapped = res.data.map((item) => {
@@ -118,7 +120,7 @@ export default function MessageChart({ profileId, className }: MessageChartProps
             <div className="animate-pulse text-muted-foreground">Loading chart data...</div>
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
             <AreaChart
               data={chartData}
               margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
