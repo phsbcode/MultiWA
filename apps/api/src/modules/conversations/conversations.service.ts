@@ -5,9 +5,21 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { prisma } from '@multiwa/database';
 import { GroupsService } from '../groups/groups.service';
 
+type GroupNameRefreshConversation = {
+  id: string;
+  jid: string;
+  name?: string | null;
+};
+
+type GroupNameRefreshState = {
+  pending: Map<string, GroupNameRefreshConversation>;
+  active: Map<string, Promise<void>>;
+};
+
 @Injectable()
 export class ConversationsService {
   private readonly logger = new Logger(ConversationsService.name);
+  private readonly groupNameRefreshes = new Map<string, GroupNameRefreshState>();
 
   constructor(private readonly groupsService: GroupsService) {}
 
@@ -93,22 +105,19 @@ export class ConversationsService {
       }
     }
 
-    // Resolve group names from WhatsApp engine (per-JID for reliability).
-    // Older rows may have been seeded with the latest participant/sender name
-    // (e.g. "AzwaHanee") instead of the actual group title, and those names
-    // look human-readable. Refresh every visible group row so group identity
-    // wins over stale sender/contact labels.
-    //
-    // Group name resolution runs fire-and-forget to avoid blocking the
-    // conversation list response on potentially dozens of engine network calls.
-    // Resolved names persist to the DB and appear on the next page load.
-    const groupConvs = conversations.filter(c => c.type === 'group' || c.jid?.includes('@g.us'));
+    // Resolve only unresolved group names from the WhatsApp engine.
+    // Human-readable stored titles are served directly; repeatedly refreshing
+    // every visible group on each GET can overload the browser protocol.
+    // Resolution runs fire-and-forget and persists names for the next load.
+    const groupConvs = conversations.filter(c =>
+      (c.type === 'group' || c.jid?.includes('@g.us')) && this.groupNameNeedsRefresh(c),
+    );
 
     if (groupConvs.length > 0) {
       // Fire-and-forget with concurrency control: resolve group names in the
       // background so they don't block the conversation list response, but
       // limit parallelism to avoid exhausting the Prisma connection pool.
-      void this.resolveGroupNames(profileId, groupConvs);
+      this.startGroupNameRefresh(profileId, groupConvs);
     }
 
     return {
@@ -461,33 +470,81 @@ export class ConversationsService {
     });
   }
 
-  // Resolve group names from the WhatsApp engine and persist to DB.
-  // Runs fire-and-forget from findAll() with concurrency control so the
-  // conversation list is never blocked on engine network calls and the
-  // Prisma connection pool is not exhausted by 100+ concurrent updates.
-  // Silently skips disconnected engines.
-  private async resolveGroupNames(profileId: string, groupConvs: any[]): Promise<void> {
-    const CONCURRENCY = 5;
-    const results: Promise<void>[] = [];
+  private groupNameNeedsRefresh(conversation: { jid?: string | null; name?: string | null }): boolean {
+    const name = conversation.name?.trim();
+    if (!name || name === 'Group Chat' || name === conversation.jid) return true;
+    return /^\d+(?:@g\.us)?$/.test(name);
+  }
 
-    for (let i = 0; i < groupConvs.length; i += CONCURRENCY) {
-      const batch = groupConvs.slice(i, i + CONCURRENCY);
-      const batchPromises = batch.map(async (gc) => {
-        try {
-          const groupInfo = await this.groupsService.getById(profileId, gc.jid);
-          if (groupInfo?.name) {
-            await prisma.conversation.update({
-              where: { id: gc.id },
-              data: { name: groupInfo.name },
-            });
-          }
-        } catch {
-          // Engine not connected or group not found — skip silently
-        }
-      });
-      results.push(Promise.allSettled(batchPromises).then(() => {}));
+  // Resolve group names from the WhatsApp engine and persist to DB.
+  // Work is queued per profile so overlapping list requests merge safely.
+  // Engine deadlines bound each lookup; the scheduler caps active calls at five.
+  private startGroupNameRefresh(
+    profileId: string,
+    groupConvs: GroupNameRefreshConversation[],
+  ): void {
+    let state = this.groupNameRefreshes.get(profileId);
+    if (!state) {
+      state = {
+        pending: new Map(),
+        active: new Map(),
+      };
+      this.groupNameRefreshes.set(profileId, state);
     }
 
-    await Promise.allSettled(results);
+    for (const conversation of groupConvs) {
+      if (!state.pending.has(conversation.jid) && !state.active.has(conversation.jid)) {
+        state.pending.set(conversation.jid, conversation);
+      }
+    }
+
+    this.pumpGroupNameRefresh(profileId, state);
+  }
+
+  private pumpGroupNameRefresh(profileId: string, state: GroupNameRefreshState): void {
+    const CONCURRENCY = 5;
+
+    while (state.active.size < CONCURRENCY && state.pending.size > 0) {
+      const next = state.pending.entries().next().value as
+        | [string, GroupNameRefreshConversation]
+        | undefined;
+      if (!next) break;
+
+      const [jid, conversation] = next;
+      state.pending.delete(jid);
+
+      const operation = this.refreshGroupName(profileId, conversation).finally(() => {
+        if (state.active.get(jid) === operation) {
+          state.active.delete(jid);
+        }
+        this.pumpGroupNameRefresh(profileId, state);
+      });
+      state.active.set(jid, operation);
+    }
+
+    if (
+      state.pending.size === 0
+      && state.active.size === 0
+      && this.groupNameRefreshes.get(profileId) === state
+    ) {
+      this.groupNameRefreshes.delete(profileId);
+    }
+  }
+
+  private async refreshGroupName(
+    profileId: string,
+    conversation: GroupNameRefreshConversation,
+  ): Promise<void> {
+    try {
+      const groupInfo = await this.groupsService.getById(profileId, conversation.jid);
+      if (groupInfo?.name) {
+        await prisma.conversation.update({
+          where: { id: conversation.id },
+          data: { name: groupInfo.name },
+        });
+      }
+    } catch {
+      // Engine not connected, protocol deadline, or group not found — skip silently
+    }
   }
 }
