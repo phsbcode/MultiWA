@@ -54,7 +54,7 @@ describe('ConversationsService', () => {
         id: 'conv-group',
         profileId: 'profile-1',
         jid: '120000000000000001@g.us',
-        name: 'Synthetic Group',
+        name: 'Group Chat',
         type: 'user',
         contact: { name: 'Synthetic Group', phone: '10000000001' },
         messages: [{ id: 'msg-1', content: { text: 'synthetic group message' }, timestamp: new Date('2026-01-01T00:00:00Z') }],
@@ -74,7 +74,7 @@ describe('ConversationsService', () => {
       id: 'conv-group',
       jid: '120000000000000001@g.us',
       type: 'group',
-      contactName: 'Synthetic Group',
+      contactName: 'Group Chat',
       contactPhone: null,
     });
     expect(groupsService.getById).toHaveBeenCalledWith('profile-1', '120000000000000001@g.us');
@@ -83,6 +83,223 @@ describe('ConversationsService', () => {
       data: { name: 'Synthetic Team' },
     }));
     expect(prisma.contact.findMany).not.toHaveBeenCalled();
+  });
+
+  it('limits background group title refreshes to five concurrent lookups', async () => {
+    const groups = Array.from({ length: 6 }, (_, index) => ({
+      id: `conv-group-${index}`,
+      profileId: 'profile-1',
+      jid: `12000000000000000${index}@g.us`,
+      name: 'Group Chat',
+      type: 'group',
+      contact: null,
+      _count: { messages: 0 },
+    }));
+    const resolveLookups: Array<(value: any) => void> = [];
+
+    vi.mocked(prisma.conversation.findMany).mockResolvedValueOnce(groups as any);
+    vi.mocked(prisma.conversation.count).mockResolvedValueOnce(groups.length);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValueOnce([] as any);
+    vi.mocked(prisma.conversation.update).mockResolvedValue({} as any);
+    groupsService.getById.mockImplementation((_profileId, groupId) => new Promise(resolve => {
+      resolveLookups.push(resolve);
+    }));
+
+    await service.findAll('profile-1', {});
+
+    expect(groupsService.getById).toHaveBeenCalledTimes(5);
+
+    resolveLookups.forEach((resolve, index) => resolve({
+      id: groups[index].jid,
+      name: `Synthetic Team ${index}`,
+      participants: [],
+    }));
+    await vi.waitFor(() => expect(groupsService.getById).toHaveBeenCalledTimes(6));
+    resolveLookups[5]({ id: groups[5].jid, name: 'Synthetic Team 5', participants: [] });
+    await vi.waitFor(() => expect(prisma.conversation.update).toHaveBeenCalledTimes(6));
+    await vi.waitFor(() => expect((service as any).groupNameRefreshes.size).toBe(0));
+  });
+
+  it('deduplicates overlapping background refreshes for the same group', async () => {
+    const group = {
+      id: 'conv-group',
+      profileId: 'profile-1',
+      jid: '120000000000000001@g.us',
+      name: 'Group Chat',
+      type: 'group',
+      contact: null,
+      _count: { messages: 0 },
+    };
+    let resolveLookup: (value: any) => void = () => {};
+
+    vi.mocked(prisma.conversation.findMany).mockResolvedValue([group] as any);
+    vi.mocked(prisma.conversation.count).mockResolvedValue(1);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as any);
+    vi.mocked(prisma.conversation.update).mockResolvedValue({} as any);
+    groupsService.getById.mockImplementation(() => new Promise(resolve => {
+      resolveLookup = resolve;
+    }));
+
+    await Promise.all([
+      service.findAll('profile-1', {}),
+      service.findAll('profile-1', {}),
+    ]);
+
+    expect(groupsService.getById).toHaveBeenCalledTimes(1);
+
+    resolveLookup({ id: group.jid, name: 'Synthetic Team', participants: [] });
+    await vi.waitFor(() => expect(prisma.conversation.update).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect((service as any).groupNameRefreshes.size).toBe(0));
+  });
+
+  it('queues different unresolved groups from overlapping requests', async () => {
+    const firstGroup = {
+      id: 'conv-group-1',
+      profileId: 'profile-1',
+      jid: '120000000000000001@g.us',
+      name: 'Group Chat',
+      type: 'group',
+      contact: null,
+      _count: { messages: 0 },
+    };
+    const secondGroup = {
+      ...firstGroup,
+      id: 'conv-group-2',
+      jid: '120000000000000002@g.us',
+    };
+    let resolveFirstLookup: (value: any) => void = () => {};
+
+    vi.mocked(prisma.conversation.findMany)
+      .mockResolvedValueOnce([firstGroup] as any)
+      .mockResolvedValueOnce([secondGroup] as any);
+    vi.mocked(prisma.conversation.count).mockResolvedValue(1);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as any);
+    vi.mocked(prisma.conversation.update).mockResolvedValue({} as any);
+    groupsService.getById
+      .mockImplementationOnce(() => new Promise(resolve => {
+        resolveFirstLookup = resolve;
+      }))
+      .mockResolvedValueOnce({ id: secondGroup.jid, name: 'Synthetic Team 2', participants: [] });
+
+    await service.findAll('profile-1', {});
+    await service.findAll('profile-1', {});
+
+    expect(groupsService.getById).toHaveBeenCalledTimes(2);
+
+    resolveFirstLookup({ id: firstGroup.jid, name: 'Synthetic Team 1', participants: [] });
+    await vi.waitFor(() => expect(prisma.conversation.update).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect((service as any).groupNameRefreshes.size).toBe(0));
+  });
+
+  it('releases failed group refreshes so a later request can retry', async () => {
+    const group = {
+      id: 'conv-group',
+      profileId: 'profile-1',
+      jid: '120000000000000001@g.us',
+      name: 'Group Chat',
+      type: 'group',
+      contact: null,
+      _count: { messages: 0 },
+    };
+
+    vi.mocked(prisma.conversation.findMany).mockResolvedValue([group] as any);
+    vi.mocked(prisma.conversation.count).mockResolvedValue(1);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as any);
+    vi.mocked(prisma.conversation.update).mockResolvedValue({} as any);
+    groupsService.getById
+      .mockRejectedValueOnce(new Error('synthetic lookup failure'))
+      .mockResolvedValueOnce({ id: group.jid, name: 'Synthetic Team', participants: [] });
+
+    await service.findAll('profile-1', {});
+    await vi.waitFor(() => expect(groupsService.getById).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect((service as any).groupNameRefreshes.size).toBe(0));
+    await service.findAll('profile-1', {});
+
+    await vi.waitFor(() => expect(groupsService.getById).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(prisma.conversation.update).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect((service as any).groupNameRefreshes.size).toBe(0));
+  });
+
+  it('fills freed concurrency slots while another lookup remains unresolved', async () => {
+    const initialGroups = Array.from({ length: 5 }, (_, index) => ({
+      id: `conv-group-${index}`,
+      profileId: 'profile-1',
+      jid: `12000000000000000${index}@g.us`,
+      name: 'Group Chat',
+      type: 'group',
+      contact: null,
+      _count: { messages: 0 },
+    }));
+    const queuedGroups = Array.from({ length: 4 }, (_, index) => ({
+      ...initialGroups[0],
+      id: `conv-queued-${index}`,
+      jid: `12000000000000010${index}@g.us`,
+    }));
+    const pending = new Map<string, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+    let active = 0;
+    let maxActive = 0;
+
+    vi.mocked(prisma.conversation.findMany)
+      .mockResolvedValueOnce(initialGroups as any)
+      .mockResolvedValueOnce(queuedGroups as any);
+    vi.mocked(prisma.conversation.count).mockResolvedValue(9);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as any);
+    vi.mocked(prisma.conversation.update).mockResolvedValue({} as any);
+    groupsService.getById.mockImplementation((_profileId, groupId) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      return new Promise((resolve, reject) => {
+        pending.set(groupId, {
+          resolve: (value) => {
+            active -= 1;
+            resolve(value);
+          },
+          reject: (error) => {
+            active -= 1;
+            reject(error);
+          },
+        });
+      });
+    });
+
+    await service.findAll('profile-1', {});
+    await service.findAll('profile-1', {});
+
+    expect(groupsService.getById).toHaveBeenCalledTimes(5);
+    for (const group of initialGroups.slice(1)) {
+      pending.get(group.jid)?.resolve({ id: group.jid, name: `Resolved ${group.id}`, participants: [] });
+    }
+
+    await vi.waitFor(() => expect(groupsService.getById).toHaveBeenCalledTimes(9));
+    expect(active).toBe(5);
+    expect(maxActive).toBe(5);
+
+    pending.get(initialGroups[0].jid)?.reject(new Error('synthetic protocol timeout'));
+    for (const group of queuedGroups) {
+      pending.get(group.jid)?.resolve({ id: group.jid, name: `Resolved ${group.id}`, participants: [] });
+    }
+    await vi.waitFor(() => expect((service as any).groupNameRefreshes.size).toBe(0));
+  });
+
+  it('does not refresh a group that already has a resolved title', async () => {
+    const group = {
+      id: 'conv-group',
+      profileId: 'profile-1',
+      jid: '120000000000000001@g.us',
+      name: 'Synthetic Team',
+      type: 'group',
+      contact: null,
+      _count: { messages: 0 },
+    };
+
+    vi.mocked(prisma.conversation.findMany).mockResolvedValueOnce([group] as any);
+    vi.mocked(prisma.conversation.count).mockResolvedValueOnce(1);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValueOnce([] as any);
+
+    const result = await service.findAll('profile-1', {});
+
+    expect(result.conversations[0].contactName).toBe('Synthetic Team');
+    expect(groupsService.getById).not.toHaveBeenCalled();
   });
 
   it('adds senderName to messages from metadata or contact lookup', async () => {
