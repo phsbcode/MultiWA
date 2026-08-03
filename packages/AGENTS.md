@@ -23,6 +23,7 @@ Shared libraries, domain logic, database layer, WhatsApp engine adapters, SDKs, 
 - `database/` is the sole Prisma schema owner; all DB access goes through it
 - `engines/` factory (`src/factory/engine-factory.ts`) selects adapter by profile type
 - `engines/` normalizes provider presence into canonical chat/participant JIDs; only adapters with documented inbound presence events emit it. whatsapp-web.js currently supports outbound chat state only and must not fabricate inbound presence.
+- `engines/` normalizes Baileys ephemeral/view-once wrappers before classifying inbound messages and exposes downloadable media to API consumers.
 - SDKs must track the API spec in `docs/07-api-specification.md`
 - All packages use TypeScript strict mode and are built with `tsc`
 

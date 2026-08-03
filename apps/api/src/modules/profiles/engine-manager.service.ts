@@ -6,7 +6,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { EventsGateway } from '../events/events.gateway';
 import { prisma } from '@multiwa/database';
-import { WhatsAppWebJsAdapter } from '@multiwa/engines';
+import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig } from '@multiwa/engines';
 import * as path from 'path';
 import * as QRCode from 'qrcode';
@@ -20,6 +20,7 @@ import {
   shouldRouteTextToFastBots,
 } from './message-type-filter';
 import { resolveSenderIdentity } from './sender-identity';
+import { resolveProfileEngineType } from './profile-engine';
 
 
 interface EngineInstance {
@@ -73,8 +74,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         });
       }
 
-      // Step 2: Auto-reconnect profiles that have valid session data
-      await this.autoReconnectProfiles();
+      // Step 2: Reconnect only profiles that were connected before this API
+      // process started. A session directory can remain after an intentional
+      // disconnect and must not override the operator's selected state.
+      await this.autoReconnectProfiles(staleProfiles.map(profile => profile.id));
       
     } catch (error) {
       this.logger.error('Error in onModuleInit:', error);
@@ -85,15 +88,22 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
    * Auto-reconnect profiles that have existing session credentials
    * This allows profiles to resume connection after API restart without QR scan
    */
-  private async autoReconnectProfiles() {
+  private async autoReconnectProfiles(profileIds: string[]) {
     this.logger.log('Checking for profiles with valid sessions to auto-reconnect...');
+
+    if (profileIds.length === 0) {
+      this.logger.log('No previously connected profiles to auto-reconnect');
+      return;
+    }
     
     const fs = await import('fs/promises');
     const sessionsDir = process.env.SESSIONS_DIR || '/data/sessions';
     
     try {
-      // Get all profiles
+      // Get only profiles that were connected before startup reset their
+      // persisted status. Deliberately disconnected profiles are excluded.
       const profiles = await prisma.profile.findMany({
+        where: { id: { in: profileIds } },
         select: { id: true, displayName: true, lastConnectedAt: true },
       });
 
@@ -265,9 +275,13 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     const sessionsBase = process.env.SESSIONS_DIR || './sessions';
     const sessionDir = path.join(sessionsBase, profileId);
 
-    // Clean up stale Chromium lock files from previous container runs
-    // Without this, Puppeteer refuses to launch: "The profile appears to be in use by another Chromium process"
-    await this.cleanupStaleLockFiles(sessionDir);
+    const engineType = resolveProfileEngineType(profile.settings);
+
+    // Chromium locks apply only to whatsapp-web.js. Baileys stores its
+    // multi-file credentials directly in the profile session directory.
+    if (engineType === 'whatsapp-web-js') {
+      await this.cleanupStaleLockFiles(sessionDir);
+    }
     
     const engineConfig: EngineConfig = {
       profileId,
@@ -789,8 +803,8 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       },
     };
 
-    // Create and initialize engine (using whatsapp-web.js for better group support)
-    const engine = new WhatsAppWebJsAdapter();
+    const engine = EngineFactory.create(engineType);
+    this.logger.log(`Using ${engineType} engine for profile ${profileId}`);
     
     try {
       await engine.initialize(engineConfig);

@@ -5,6 +5,7 @@ import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef 
 import { prisma } from '@multiwa/database';
 import { CreateProfileDto, UpdateProfileDto } from './dto';
 import { EngineManagerService } from './engine-manager.service';
+import { profileSettingsWithEngine, resolveProfileEngineType } from './profile-engine';
 
 @Injectable()
 export class ProfilesService {
@@ -45,6 +46,7 @@ export class ProfilesService {
 
       return {
         ...profile,
+        engine: resolveProfileEngineType(profile.settings),
         name: profile.displayName,
         phone: profile.phoneNumber,
         sessionData: parsedSessionData,
@@ -85,12 +87,13 @@ export class ProfilesService {
         displayName: dto.name,
         webhookUrl: dto.webhookUrl,
         webhookSecret: dto.webhookSecret,
+        settings: profileSettingsWithEngine({}, dto.engine),
       },
     });
   }
 
   async update(id: string, dto: UpdateProfileDto) {
-    await this.findOne(id);
+    const profile = await this.findOne(id);
 
     return prisma.profile.update({
       where: { id },
@@ -98,6 +101,9 @@ export class ProfilesService {
         displayName: dto.name,
         webhookUrl: dto.webhookUrl,
         webhookSecret: dto.webhookSecret,
+        settings: dto.engine
+          ? profileSettingsWithEngine(profile.settings, dto.engine)
+          : undefined,
       },
     });
   }
@@ -149,6 +155,7 @@ export class ProfilesService {
       phone: profile.phoneNumber,
       lastConnectedAt: profile.lastConnectedAt,
       engineConnected: engineStatus.isConnected,
+      engine: resolveProfileEngineType(profile.settings),
     };
   }
 }

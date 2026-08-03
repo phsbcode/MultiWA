@@ -6,7 +6,7 @@ import makeWASocket, {
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
-  WAMessageContent,
+  downloadMediaMessage,
   proto,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
@@ -23,6 +23,8 @@ import type {
   SendMessageOptions,
 } from '../types';
 import { normalizeBaileysPresenceUpdate } from '../presence';
+import { shouldHandleBaileysDisconnect } from './baileys-lifecycle';
+import { normalizeBaileysInbound } from './baileys-inbound';
 
 
 export class BaileysAdapter implements IWhatsAppEngine {
@@ -39,6 +41,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
   private authState: any = null;
   private connectionRetryCount: number = 0;
   private maxConnectionRetries: number = 3;
+  private isDestroying = false;
 
   async initialize(config: EngineConfig): Promise<void> {
     this.config = config;
@@ -89,6 +92,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
       }
 
       if (connection === 'close') {
+        if (!shouldHandleBaileysDisconnect(this.isDestroying)) return;
         const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
         const isLoggedOut = statusCode === DisconnectReason.loggedOut;
         const isConnectionFailure = lastDisconnect?.error?.message?.includes('Connection Failure');
@@ -134,12 +138,8 @@ export class BaileysAdapter implements IWhatsAppEngine {
           lastDisconnect?.error?.message || 'Connection closed'
         );
 
-        // Auto-reconnect unless logged out
-        if (!isLoggedOut) {
-          const delay = Math.min(3000 * (this.connectionRetryCount + 1), 15000); // Exponential backoff, max 15s
-          console.log(`[Baileys] Reconnecting in ${delay}ms...`);
-          setTimeout(() => this.connect(), delay);
-        }
+        // EngineManager owns retry/backoff. Keeping a second reconnect loop in
+        // the adapter creates overlapping sockets and rapidly invalidates QRs.
       }
 
       if (connection === 'open') {
@@ -176,25 +176,31 @@ export class BaileysAdapter implements IWhatsAppEngine {
       for (const message of messages) {
         if (message.key.fromMe) continue;
 
+        const inbound = normalizeBaileysInbound(message.message);
+
         const transformedMessage = {
           id: message.key.id,
           from: message.key.remoteJid,
           to: this.socket?.user?.id,
-          body: message.message?.conversation ||
-            message.message?.extendedTextMessage?.text || '',
-          type: this.getMessageType(message.message),
+          body: inbound.body,
+          type: inbound.type,
           timestamp: new Date(
             (message.messageTimestamp as number) * 1000
           ),
           isGroup: message.key.remoteJid?.endsWith('@g.us') || false,
-          hasMedia: !!message.message?.imageMessage ||
-            !!message.message?.videoMessage ||
-            !!message.message?.audioMessage ||
-            !!message.message?.documentMessage,
+          hasMedia: Boolean(inbound.media),
           fromMe: false,
           author: message.key.participant,
           participant: message.key.participant,
           pushName: message.pushName,
+          downloadMedia: inbound.media ? async () => {
+            const data = await downloadMediaMessage(message, 'buffer', {});
+            return {
+              data: data.toString('base64'),
+              mimetype: inbound.media?.mimetype || 'application/octet-stream',
+              filename: inbound.media?.filename,
+            };
+          } : undefined,
         };
 
         this.config?.onMessage?.(transformedMessage);
@@ -220,20 +226,8 @@ export class BaileysAdapter implements IWhatsAppEngine {
     });
   }
 
-  private getMessageType(message: WAMessageContent | null | undefined): string {
-    if (!message) return 'unknown';
-    if (message.conversation || message.extendedTextMessage) return 'text';
-    if (message.imageMessage) return 'image';
-    if (message.videoMessage) return 'video';
-    if (message.audioMessage) return 'audio';
-    if (message.documentMessage) return 'document';
-    if (message.locationMessage) return 'location';
-    if (message.contactMessage) return 'contact';
-    if (message.stickerMessage) return 'sticker';
-    return 'unknown';
-  }
-
   async disconnect(): Promise<void> {
+    this.isDestroying = true;
     if (this.socket) {
       await this.socket.logout();
       this.status = { isConnected: false, isAuthenticated: false };
@@ -241,6 +235,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
   }
 
   async destroy(): Promise<void> {
+    this.isDestroying = true;
     if (this.socket) {
       this.socket.end(undefined);
       this.socket = null;
@@ -792,4 +787,3 @@ export class BaileysAdapter implements IWhatsAppEngine {
     }
   }
 }
-

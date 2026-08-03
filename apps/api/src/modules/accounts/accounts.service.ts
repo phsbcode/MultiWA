@@ -4,6 +4,7 @@
 import { Injectable, NotFoundException, Logger, Inject, forwardRef } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import { EngineManagerService } from '../profiles/engine-manager.service';
+import { profileSettingsWithEngine } from '../profiles/profile-engine';
 
 @Injectable()
 export class AccountsService {
@@ -158,7 +159,7 @@ export class AccountsService {
         displayName: dto.name || dto.displayName,
         phoneNumber: dto.phoneNumber || dto.phone,
         status: 'DISCONNECTED',
-        settings: {},
+        settings: profileSettingsWithEngine(dto.settings, dto.engine ?? dto.settings?.engine),
       },
     });
   }
