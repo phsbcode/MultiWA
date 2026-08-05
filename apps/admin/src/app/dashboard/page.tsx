@@ -73,7 +73,7 @@ export default function DashboardPage() {
     fetchDataCb();
 
     // Connect to Socket.IO for real-time updates
-    // Use API URL directly — Next.js rewrites proxy doesn't handle WebSocket
+    // Production uses the page origin through the public Socket.IO reverse proxy.
     const wsUrl = getSocketUrl();
     const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
     
@@ -319,4 +319,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-

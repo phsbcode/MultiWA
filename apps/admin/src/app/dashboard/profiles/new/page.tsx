@@ -111,7 +111,7 @@ export default function NewProfilePage() {
 
   const connectWebSocket = (profileId: string) => {
     // WebSocket must connect directly to API server
-    // Next.js rewrites only work for HTTP, not WebSocket
+    // Production uses the page origin through the public Socket.IO reverse proxy.
     const wsUrl = getSocketUrl();
     
     console.log('Connecting WebSocket to:', wsUrl);
