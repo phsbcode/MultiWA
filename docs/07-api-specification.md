@@ -149,6 +149,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `GET` | `/messages/schedule/:profileId` | List scheduled messages for a profile |
 | `DELETE` | `/messages/schedule/:id` | Cancel a scheduled message |
 | `GET` | `/messages/profile/:profileId` | List messages for a profile |
+| `POST` | `/messages/profile/:profileId/resolve-senders` | Resolve provider sender identities to phone numbers |
 | `GET` | `/messages/conversation/:conversationId` | List messages in a conversation |
 | `GET` | `/messages/:id` | Get a single message |
 | `DELETE` | `/messages/:id` | Delete a message locally |
