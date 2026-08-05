@@ -173,6 +173,15 @@ export class MessagesController {
     return this.service.findByProfile(profileId, { limit, offset, type, direction });
   }
 
+  @Post('profile/:profileId/resolve-senders')
+  @ApiOperation({ summary: 'Resolve provider sender identities to phone numbers' })
+  async resolveSenderPhones(
+    @Param('profileId') profileId: string,
+    @Body() body: { jids?: string[] },
+  ) {
+    return this.service.resolveSenderPhones(profileId, body?.jids || []);
+  }
+
   // Get messages by conversation
   @Get('conversation/:conversationId')
   @ApiOperation({ summary: 'Get messages by conversation' })

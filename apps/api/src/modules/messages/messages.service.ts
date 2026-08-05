@@ -372,6 +372,23 @@ export class MessagesService {
     });
   }
 
+  async resolveSenderPhones(profileId: string, jids: string[]) {
+    if (!Array.isArray(jids) || jids.length > 50) {
+      throw new BadRequestException('Supply no more than 50 sender identities.');
+    }
+    const requested = [...new Set(jids.map(value => String(value || '').trim()).filter(value =>
+      value.toLowerCase().slice(-4) === '@' + 'lid'))];
+    const engine = this.engineManager.getEngine(profileId);
+    if (!engine?.resolvePhoneJids || !requested.length) return { phones: {} };
+    const mapped = await engine.resolvePhoneJids(requested);
+    const phones: Record<string, string> = {};
+    for (const jid of requested) {
+      const phone = String(mapped[jid] || '').split('@')[0].split(':')[0].replace(/\D/g, '');
+      if (/^\d{7,15}$/.test(phone)) phones[jid] = phone;
+    }
+    return { phones };
+  }
+
   // Find messages by conversation
   async findByConversation(conversationId: string, options: { limit?: number; before?: string }) {
     const where: any = { conversationId };

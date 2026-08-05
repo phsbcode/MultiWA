@@ -81,6 +81,26 @@ export class BaileysAdapter implements IWhatsAppEngine {
     return this.phoneNumberShares.get(value) || value;
   }
 
+  async resolvePhoneJids(jids: string[]): Promise<Record<string, string>> {
+    const unique = [...new Set(jids.filter(value => value.toLowerCase().slice(-4) === '@' + 'lid'))];
+    const resolved: Record<string, string> = {};
+    for (const jid of unique) {
+      const cached = this.phoneNumberShares.get(jid);
+      if (cached) resolved[jid] = cached;
+    }
+    const missing = unique.filter(jid => !resolved[jid]);
+    const lidMapping = (this.socket as any)?.signalRepository?.lidMapping;
+    if (!missing.length || !lidMapping?.getPNsForLIDs) return resolved;
+    const mappings = await lidMapping.getPNsForLIDs(missing);
+    for (const mapping of mappings || []) {
+      if (mapping?.lid && mapping?.pn) {
+        resolved[mapping.lid] = mapping.pn;
+        this.phoneNumberShares.set(mapping.lid, mapping.pn);
+      }
+    }
+    return resolved;
+  }
+
   private async emitInboundMessage(message: proto.IWebMessageInfo, historical: boolean): Promise<void> {
     // A null payload is Baileys' CIPHERTEXT/unavailable placeholder. Baileys
     // requests a retry itself; it is not a customer message and must not be

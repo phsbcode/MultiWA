@@ -190,6 +190,9 @@ export interface IWhatsAppEngine {
   // Contacts - fetch contacts from WhatsApp
   getContacts(): Promise<ContactInfo[]>;
 
+  // Resolve provider-only participant identities when an engine has a trusted mapping.
+  resolvePhoneJids?(jids: string[]): Promise<Record<string, string>>;
+
   createGroup(name: string, participants: string[]): Promise<GroupInfo>;
   setGroupName(groupId: string, name: string): Promise<void>;
   setGroupDescription(groupId: string, description: string): Promise<void>;
