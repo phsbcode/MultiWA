@@ -88,7 +88,21 @@ export class BaileysAdapter implements IWhatsAppEngine {
       const cached = this.phoneNumberShares.get(jid);
       if (cached) resolved[jid] = cached;
     }
-    const missing = unique.filter(jid => !resolved[jid]);
+    let missing = unique.filter(jid => !resolved[jid]);
+    if (missing.length && this.authState?.keys?.get) {
+      const reverseKeys = missing.map(jid => `${jid.split('@')[0].split(':')[0]}_reverse`);
+      const stored = await this.authState.keys.get('lid-mapping', reverseKeys);
+      for (const jid of missing) {
+        const user = jid.split('@')[0].split(':')[0];
+        const phone = stored[`${user}_reverse`];
+        if (typeof phone === 'string' && /^\d{7,15}$/.test(phone)) {
+          const phoneJid = `${phone}@s.whatsapp.net`;
+          resolved[jid] = phoneJid;
+          this.phoneNumberShares.set(jid, phoneJid);
+        }
+      }
+    }
+    missing = unique.filter(jid => !resolved[jid]);
     const lidMapping = (this.socket as any)?.signalRepository?.lidMapping;
     if (!missing.length || !lidMapping?.getPNsForLIDs) return resolved;
     const mappings = await lidMapping.getPNsForLIDs(missing);
