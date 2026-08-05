@@ -24,7 +24,22 @@ export type NormalizedBaileysInbound = {
   body: string;
   type: BaileysInboundType;
   media?: BaileysInboundMedia;
+  quotedMessageId?: string;
 };
+
+function quotedMessageId(content: WAMessageContent): string | undefined {
+  return content.extendedTextMessage?.contextInfo?.stanzaId
+    || content.imageMessage?.contextInfo?.stanzaId
+    || content.videoMessage?.contextInfo?.stanzaId
+    || content.audioMessage?.contextInfo?.stanzaId
+    || content.documentMessage?.contextInfo?.stanzaId
+    || content.stickerMessage?.contextInfo?.stanzaId
+    || content.locationMessage?.contextInfo?.stanzaId
+    || content.liveLocationMessage?.contextInfo?.stanzaId
+    || content.contactMessage?.contextInfo?.stanzaId
+    || content.contactsArrayMessage?.contextInfo?.stanzaId
+    || undefined;
+}
 
 export function normalizeBaileysInbound(
   rawContent: WAMessageContent | null | undefined,
@@ -35,11 +50,14 @@ export function normalizeBaileysInbound(
     return { body: '', type: 'unknown' };
   }
 
+  const quoted = quotedMessageId(content);
+
   if (content.conversation || content.extendedTextMessage) {
     return {
       content,
       body: content.conversation || content.extendedTextMessage?.text || '',
       type: 'text',
+      quotedMessageId: quoted,
     };
   }
 
@@ -49,6 +67,7 @@ export function normalizeBaileysInbound(
       body: content.imageMessage.caption || '',
       type: 'image',
       media: { mimetype: content.imageMessage.mimetype || 'image/jpeg' },
+      quotedMessageId: quoted,
     };
   }
 
@@ -58,6 +77,7 @@ export function normalizeBaileysInbound(
       body: content.videoMessage.caption || '',
       type: 'video',
       media: { mimetype: content.videoMessage.mimetype || 'video/mp4' },
+      quotedMessageId: quoted,
     };
   }
 
@@ -67,6 +87,7 @@ export function normalizeBaileysInbound(
       body: '',
       type: 'audio',
       media: { mimetype: content.audioMessage.mimetype || 'audio/ogg' },
+      quotedMessageId: quoted,
     };
   }
 
@@ -79,6 +100,7 @@ export function normalizeBaileysInbound(
         mimetype: content.documentMessage.mimetype || 'application/octet-stream',
         filename: content.documentMessage.fileName || undefined,
       },
+      quotedMessageId: quoted,
     };
   }
 
@@ -88,18 +110,19 @@ export function normalizeBaileysInbound(
       body: '',
       type: 'sticker',
       media: { mimetype: content.stickerMessage.mimetype || 'image/webp' },
+      quotedMessageId: quoted,
     };
   }
 
   if (content.locationMessage || content.liveLocationMessage) {
-    return { content, body: '', type: 'location' };
+    return { content, body: '', type: 'location', quotedMessageId: quoted };
   }
 
   if (content.contactMessage || content.contactsArrayMessage) {
-    return { content, body: '', type: 'contact' };
+    return { content, body: '', type: 'contact', quotedMessageId: quoted };
   }
 
-  return { content, body: '', type: 'unknown' };
+  return { content, body: '', type: 'unknown', quotedMessageId: quoted };
 }
 
 export function isBaileysProtocolMessage(

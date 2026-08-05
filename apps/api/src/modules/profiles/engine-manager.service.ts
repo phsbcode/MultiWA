@@ -459,9 +459,15 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           if (providerMessageId) {
             const existingMessage = await prisma.message.findFirst({
               where: { profileId, messageId: providerMessageId },
-              select: { id: true },
+              select: { id: true, quotedMessageId: true },
             });
             if (existingMessage) {
+              if (!existingMessage.quotedMessageId && message.quotedMessageId) {
+                await prisma.message.update({
+                  where: { id: existingMessage.id },
+                  data: { quotedMessageId: String(message.quotedMessageId) },
+                });
+              }
               this.logger.debug(`Skipping duplicate WhatsApp message ${providerMessageId}`);
               return;
             }
@@ -629,6 +635,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
               senderJid,
               type: msgType === 'chat' ? 'text' : msgType,
               content,
+              quotedMessageId: message.quotedMessageId ? String(message.quotedMessageId) : null,
               status: 'received',
               metadata: {
                 senderName,

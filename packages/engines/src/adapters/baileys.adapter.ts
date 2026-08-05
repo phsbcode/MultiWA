@@ -81,6 +81,13 @@ export class BaileysAdapter implements IWhatsAppEngine {
     return this.phoneNumberShares.get(value) || value;
   }
 
+  private async rememberPhoneNumberShare(lid: string | null | undefined, phoneJid: string | null | undefined) {
+    if (!lid?.endsWith('@lid') || !/^\d{7,15}@s\.whatsapp\.net$/i.test(phoneJid || '')) return;
+    if (this.phoneNumberShares.get(lid) === phoneJid) return;
+    this.phoneNumberShares.set(lid, phoneJid!);
+    await this.config?.onPhoneNumberShare?.({ lid, jid: phoneJid! });
+  }
+
   async resolvePhoneJids(jids: string[]): Promise<Record<string, string>> {
     const unique = [...new Set(jids.filter(value => value.toLowerCase().slice(-4) === '@' + 'lid'))];
     const resolved: Record<string, string> = {};
@@ -104,12 +111,33 @@ export class BaileysAdapter implements IWhatsAppEngine {
     }
     missing = unique.filter(jid => !resolved[jid]);
     const lidMapping = (this.socket as any)?.signalRepository?.lidMapping;
-    if (!missing.length || !lidMapping?.getPNsForLIDs) return resolved;
-    const mappings = await lidMapping.getPNsForLIDs(missing);
-    for (const mapping of mappings || []) {
-      if (mapping?.lid && mapping?.pn) {
-        resolved[mapping.lid] = mapping.pn;
-        this.phoneNumberShares.set(mapping.lid, mapping.pn);
+    if (missing.length && lidMapping?.getPNsForLIDs) {
+      const mappings = await lidMapping.getPNsForLIDs(missing);
+      for (const mapping of mappings || []) {
+        if (mapping?.lid && mapping?.pn) {
+          resolved[mapping.lid] = mapping.pn;
+          this.phoneNumberShares.set(mapping.lid, mapping.pn);
+        }
+      }
+    }
+    missing = unique.filter(jid => !resolved[jid]);
+    if (missing.length && this.socket?.groupFetchAllParticipating) {
+      try {
+        const groups = await this.socket.groupFetchAllParticipating();
+        for (const group of Object.values(groups || {}) as any[]) {
+          for (const participant of group.participants || []) {
+            const lid = String(participant.lid ||
+              (String(participant.id || '').endsWith('@lid') ? participant.id : ''));
+            const phoneJid = String(participant.phoneNumber ||
+              (String(participant.id || '').endsWith('@s.whatsapp.net') ? participant.id : ''));
+            if (missing.includes(lid) && /^\d{7,15}@s\.whatsapp\.net$/i.test(phoneJid)) {
+              resolved[lid] = phoneJid;
+              this.phoneNumberShares.set(lid, phoneJid);
+            }
+          }
+        }
+      } catch {
+        // Group metadata is an optional final fallback; preserve any mappings already found.
       }
     }
     return resolved;
@@ -123,7 +151,14 @@ export class BaileysAdapter implements IWhatsAppEngine {
     this.rememberMessage(message);
     const inbound = normalizeBaileysInbound(message.message);
     const remoteJid = this.canonicalJid(message.key.remoteJid);
-    const participant = this.canonicalJid(message.key.participant);
+    const keyWithAlt = message.key as proto.IMessageKey & {
+      participantAlt?: string | null;
+      remoteJidAlt?: string | null;
+    };
+    await this.rememberPhoneNumberShare(message.key.participant, keyWithAlt.participantAlt);
+    await this.rememberPhoneNumberShare(message.key.remoteJid, keyWithAlt.remoteJidAlt);
+    const participant = this.canonicalJid(message.key.participant) ||
+      this.canonicalJid(keyWithAlt.participantAlt);
     await this.config?.onMessage?.({
       id: message.key.id,
       from: remoteJid,
@@ -138,6 +173,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
       participant,
       pushName: message.pushName,
       isHistorical: historical,
+      quotedMessageId: inbound.quotedMessageId,
       downloadMedia: inbound.media ? async () => {
         const data = await downloadMediaMessage(message as any, 'buffer', {});
         return {

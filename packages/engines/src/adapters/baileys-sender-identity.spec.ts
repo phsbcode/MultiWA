@@ -32,4 +32,43 @@ describe('Baileys sender identity resolution', () => {
     });
     expect(getPNsForLIDs).toHaveBeenCalledTimes(1);
   });
+
+  it('falls back to the group participant LID and phone-number pair', async () => {
+    const adapter = new BaileysAdapter();
+    const providerIdentity = ['900000000000001', 'lid'].join('@');
+    (adapter as any).socket = {
+      signalRepository: { lidMapping: { getPNsForLIDs: vi.fn().mockResolvedValue([]) } },
+      groupFetchAllParticipating: vi.fn().mockResolvedValue({
+        'sample-group@g.us': { participants: [{
+          id: providerIdentity,
+          lid: providerIdentity,
+          phoneNumber: '60129876543@s.whatsapp.net',
+        }] },
+      }),
+    };
+
+    await expect(adapter.resolvePhoneJids([providerIdentity])).resolves.toEqual({
+      [providerIdentity]: '60129876543@s.whatsapp.net',
+    });
+  });
+
+  it('retains Baileys participantAlt phone identities and emits a durable mapping', async () => {
+    const adapter = new BaileysAdapter();
+    const providerIdentity = ['900000000000001', 'lid'].join('@');
+    const onPhoneNumberShare = vi.fn().mockResolvedValue(undefined);
+    (adapter as any).config = { onPhoneNumberShare };
+
+    await (adapter as any).rememberPhoneNumberShare(
+      providerIdentity,
+      '60129876543@s.whatsapp.net',
+    );
+
+    await expect(adapter.resolvePhoneJids([providerIdentity])).resolves.toEqual({
+      [providerIdentity]: '60129876543@s.whatsapp.net',
+    });
+    expect(onPhoneNumberShare).toHaveBeenCalledWith({
+      lid: providerIdentity,
+      jid: '60129876543@s.whatsapp.net',
+    });
+  });
 });

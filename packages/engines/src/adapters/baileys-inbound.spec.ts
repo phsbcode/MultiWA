@@ -60,6 +60,21 @@ describe('Baileys inbound normalization', () => {
     expect(inbound.media).toBeUndefined();
   });
 
+  it('preserves the provider message ID quoted by an inbound reply', () => {
+    const inbound = normalizeBaileysInbound({
+      extendedTextMessage: {
+        text: 'Paid in full',
+        contextInfo: { stanzaId: 'quoted-provider-message' },
+      },
+    } as WAMessageContent);
+
+    expect(inbound).toMatchObject({
+      body: 'Paid in full',
+      type: 'text',
+      quotedMessageId: 'quoted-provider-message',
+    });
+  });
+
   it('extracts edited text from a Baileys message update', () => {
     const inbound = normalizeBaileysEditedMessage({
       editedMessage: {

@@ -164,4 +164,38 @@ describe('EngineManagerService engine selection', () => {
     }));
     expect(eventsGateway.emitMessage).not.toHaveBeenCalled();
   });
+
+  it('persists inbound quoted-message linkage for reply-aware consumers', async () => {
+    vi.mocked(prisma.profile.findUnique).mockResolvedValue({
+      id: 'profile-baileys',
+      settings: { engine: 'baileys' },
+    } as any);
+    vi.mocked(prisma.message.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.conversation.findFirst).mockResolvedValue({
+      id: 'conversation',
+      jid: 'payment-group@g.us',
+      lastMessageAt: null,
+    } as any);
+    vi.mocked(prisma.message.create).mockResolvedValue({ id: 'database-message' } as any);
+    vi.mocked(prisma.conversation.update).mockResolvedValue({} as any);
+
+    await service.connectProfile('profile-baileys');
+    const config = engine.initialize.mock.calls[0][0];
+    await config.onMessage({
+      id: 'reply-message',
+      from: 'payment-group@g.us',
+      author: '60123456789@s.whatsapp.net',
+      body: 'Payment context',
+      type: 'text',
+      timestamp: new Date('2026-08-05T10:00:00Z'),
+      quotedMessageId: 'quoted-slip-message',
+      isGroup: true,
+      isHistorical: true,
+      fromMe: false,
+    });
+
+    expect(prisma.message.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ quotedMessageId: 'quoted-slip-message' }),
+    }));
+  });
 });
