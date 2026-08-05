@@ -18,6 +18,7 @@ Application layer of MultiWA: the NestJS REST API gateway, the Next.js admin das
 - Worker consumes BullMQ queues enqueued by the API
 - Profile engine selection is persisted in `Profile.settings.engine`; profiles without a valid saved engine remain on `whatsapp-web-js`, while the engine manager constructs explicitly selected adapters through `EngineFactory` and restores only profiles that were connected before startup.
 - WhatsApp protocol/status events such as `e2e_notification` are not customer messages. The API must discard them before conversation persistence, unread counts, notifications, hooks, automations, or FastBots AI processing.
+- Provider message mutations update the existing persisted message and publish `message:update` to the profile room. Baileys history/append replays are persistence-only: they must be deduplicated and must not increase unread counts or invoke WebSockets, notifications, hooks, automations, or FastBots.
 - Route private text to FastBots only when it expresses actionable customer intent: a greeting, question, DNT/programme interest, or help request. Persist ordinary chat normally, but do not invoke AI for acknowledgements, closures, reactions, staff-style handoff text, or unrelated statements.
 - Environment configuration via `.env` files (see root `.env.example`)
 

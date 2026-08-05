@@ -203,6 +203,10 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     this.server.to(`profile:${profileId}`).emit('message', message);
   }
 
+  emitMessageUpdate(profileId: string, message: any) {
+    this.server.to(`profile:${profileId}`).emit('message:update', { profileId, message });
+  }
+
   emitPresence(profileId: string, presence: any) {
     this.server.to(`profile:${profileId}`).emit('presence:update', presence);
   }

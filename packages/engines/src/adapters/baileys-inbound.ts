@@ -101,3 +101,38 @@ export function normalizeBaileysInbound(
 
   return { content, body: '', type: 'unknown' };
 }
+
+export function isBaileysProtocolMessage(
+  rawContent: WAMessageContent | null | undefined,
+): boolean {
+  return Boolean(
+    rawContent?.protocolMessage
+    || rawContent?.editedMessage
+    || normalizeMessageContent(rawContent)?.protocolMessage,
+  );
+}
+
+export function normalizeBaileysProtocolEdit(
+  rawContent: WAMessageContent | null | undefined,
+): { messageId: string; inbound: NormalizedBaileysInbound; timestampMs?: unknown } | null {
+  const protocol = rawContent?.protocolMessage
+    || normalizeMessageContent(rawContent)?.protocolMessage;
+  const messageId = protocol?.key?.id;
+  if (!messageId || !protocol.editedMessage) return null;
+  return {
+    messageId,
+    inbound: normalizeBaileysInbound(protocol.editedMessage),
+    timestampMs: protocol.timestampMs,
+  };
+}
+
+export function normalizeBaileysEditedMessage(
+  rawContent: WAMessageContent | null | undefined,
+): NormalizedBaileysInbound | null {
+  if (rawContent?.editedMessage?.message) {
+    return normalizeBaileysInbound(rawContent);
+  }
+  const content = normalizeMessageContent(rawContent);
+  const edited = content?.protocolMessage?.editedMessage;
+  return edited ? normalizeBaileysInbound(edited) : null;
+}
