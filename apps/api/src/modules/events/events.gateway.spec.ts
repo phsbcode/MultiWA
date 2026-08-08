@@ -109,4 +109,21 @@ describe('EventsGateway', () => {
     await expect(gateway.handleJoin(client, { profileId: 'profile-elsewhere' })).rejects.toThrow('Profile access denied');
     expect(client.join).not.toHaveBeenCalled();
   });
+
+  it('expires cached pairing QR codes after two minutes', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-08-08T00:00:00.000Z'));
+      const gateway = new EventsGateway(jwtService as any);
+      gateway.server = { to: vi.fn(() => ({ emit: vi.fn() })) } as any;
+
+      gateway.emitQrUpdate('profile-1', 'data:image/png;base64,TEST');
+      expect(gateway.getCachedQr('profile-1')).toBe('data:image/png;base64,TEST');
+
+      vi.advanceTimersByTime(120_001);
+      expect(gateway.getCachedQr('profile-1')).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

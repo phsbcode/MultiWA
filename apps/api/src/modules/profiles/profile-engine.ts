@@ -23,3 +23,20 @@ export function profileSettingsWithEngine(settings: unknown, requestedEngine?: u
 
   return { ...existing, engine };
 }
+
+export function profileAllowsDntOperations(settings: unknown): boolean {
+  return Boolean(
+    settings
+      && typeof settings === 'object'
+      && !Array.isArray(settings)
+      && (settings as Record<string, unknown>).dntOperationsAccess === true,
+  );
+}
+
+export function profileSettingsWithDntOperationsAccess(settings: unknown, allowed: boolean): Record<string, any> {
+  const existing = settings && typeof settings === 'object' && !Array.isArray(settings)
+    ? settings as Record<string, any>
+    : {};
+
+  return { ...existing, dntOperationsAccess: allowed === true };
+}

@@ -125,8 +125,17 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `POST` | `/profiles/:id/connect` | Start WhatsApp connection |
 | `POST` | `/profiles/:id/disconnect` | Disconnect |
 | `GET` | `/profiles/:id/status` | Get connection status |
+| `GET` | `/profiles/dnt-operations` | List organization profiles explicitly allowed for DNT Operations |
+| `POST` | `/profiles/dnt-operations` | Create an organization profile with DNT Operations access enabled |
+| `GET` | `/profiles/:id/dnt-operations/status` | Get status for an allowed DNT Operations profile |
+| `POST` | `/profiles/:id/dnt-operations/connect` | Start or resume pairing for an allowed DNT Operations profile |
+| `GET` | `/profiles/:id/dnt-operations/qr` | Retrieve the current short-lived pairing QR code for an allowed profile |
+| `POST` | `/profiles/:id/dnt-operations/cancel-pairing` | Cancel an in-progress pairing without affecting connected profiles |
+| `DELETE` | `/profiles/:id/dnt-operations` | Permanently delete an organization-owned profile explicitly allowed for DNT Operations |
 
-> The QR endpoint lives under the account-scoped `/accounts/.../qr` route, not on the flat `/profiles` resource.
+The general QR endpoint lives under the account-scoped `/accounts/.../qr` route. The flat QR route above is a restricted integration boundary: it accepts only organization-owned profiles whose `settings.dntOperationsAccess` flag is exactly `true`, and its server-side QR cache expires after two minutes. Turning the flag off does not disconnect a profile.
+
+For the same restricted integration, `GET /groups/dnt-operations/profile/:profileId` returns groups only after the profile access and organization checks pass.
 
 ### Messages (`/messages`)
 
@@ -185,6 +194,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/groups/profile/:profileId` | List groups for a profile |
+| `GET` | `/groups/dnt-operations/profile/:profileId` | List groups after DNT Operations profile access and organization checks |
 | `GET` | `/groups/:groupId` | Get group info |
 | `POST` | `/groups` | Create group |
 | `PATCH` | `/groups/:groupId` | Update group |

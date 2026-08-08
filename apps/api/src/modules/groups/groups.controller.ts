@@ -10,7 +10,8 @@ import {
   Param, 
   Body, 
   Query,
-  UseGuards 
+  UseGuards,
+  Request,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { GroupsService } from './groups.service';
@@ -23,6 +24,7 @@ import {
   DemoteParticipantsDto 
 } from './dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { ProfilesService } from '../profiles/profiles.service';
 
 @ApiTags('Groups')
 @Controller('groups')
@@ -30,7 +32,20 @@ import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 export class GroupsController {
-  constructor(private readonly groupsService: GroupsService) {}
+  constructor(
+    private readonly groupsService: GroupsService,
+    private readonly profilesService: ProfilesService,
+  ) {}
+
+  @Get('dnt-operations/profile/:profileId')
+  @ApiOperation({ summary: 'Get groups for a profile explicitly allowed for DNT Operations' })
+  async getAllForDntOperations(
+    @Param('profileId') profileId: string,
+    @Request() req: any,
+  ) {
+    await this.profilesService.getDntOperationsStatus(profileId, req.user.organizationId);
+    return this.groupsService.getAll(profileId);
+  }
 
   @Get('profile/:profileId')
   @ApiOperation({ summary: 'Get all groups for a profile' })

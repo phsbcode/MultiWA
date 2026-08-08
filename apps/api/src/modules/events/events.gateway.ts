@@ -37,7 +37,7 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
 
   // Cache the latest QR code per profile so newly-joining clients
   // don't miss it if the engine emitted the QR before the client joined.
-  private latestQr: Map<string, string> = new Map();
+  private latestQr: Map<string, { qrCode: string; expiresAt: number }> = new Map();
 
   // Cache the latest connection status per profile for the same reason.
   private latestStatus: Map<string, { status: string; phoneNumber?: string }> = new Map();
@@ -115,7 +115,7 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
 
     // Catch-up: if there's a recent QR code the client may have missed,
     // re-emit it directly to this client (not to the whole room).
-    const pendingQr = this.latestQr.get(profileId);
+    const pendingQr = this.getCachedQr(profileId);
     if (pendingQr) {
       this.logger.log(`Re-emitting pending QR for profile ${profileId} to newly-joined client ${client.id}`);
       client.emit('qr:update', { profileId, qrCode: pendingQr });
@@ -163,7 +163,7 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
   emitQrUpdate(profileId: string, qrCode: string) {
     this.logger.log(`Emitting qr:update for profile: ${profileId}`);
     // Cache so late-joining clients can catch up
-    this.latestQr.set(profileId, qrCode);
+    this.latestQr.set(profileId, { qrCode, expiresAt: Date.now() + 120_000 });
     this.server.to(`profile:${profileId}`).emit('qr:update', { profileId, qrCode });
   }
 
@@ -191,7 +191,13 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
 
   // Get cached QR code for a profile
   getCachedQr(profileId: string): string | undefined {
-    return this.latestQr.get(profileId);
+    const cached = this.latestQr.get(profileId);
+    if (!cached) return undefined;
+    if (cached.expiresAt <= Date.now()) {
+      this.latestQr.delete(profileId);
+      return undefined;
+    }
+    return cached.qrCode;
   }
 
   emitStatus(profileId: string, status: string, data?: any) {

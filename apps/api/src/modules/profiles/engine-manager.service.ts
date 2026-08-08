@@ -240,6 +240,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     this.engines.clear();
   }
 
+  getCachedQrCode(profileId: string): string | undefined {
+    return this.eventsGateway.getCachedQr(profileId);
+  }
+
   /**
    * Initialize and connect a WhatsApp engine for a profile
    */
