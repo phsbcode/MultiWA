@@ -1,7 +1,7 @@
 // MultiWA Gateway - Enhanced Messages Controller
 // apps/api/src/modules/messages/messages.controller.ts
 
-import { Controller, Get, Post, Delete, Put, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Post, Delete, Put, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { MessagesService } from './messages.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
@@ -163,14 +163,20 @@ export class MessagesController {
   @ApiQuery({ name: 'offset', required: false })
   @ApiQuery({ name: 'type', required: false, enum: ['text', 'image', 'video', 'audio', 'document', 'location', 'contact'] })
   @ApiQuery({ name: 'direction', required: false, enum: ['incoming', 'outgoing'] })
+  @ApiQuery({ name: 'since', required: false, description: 'Return messages at or after this ISO timestamp' })
   async findByProfile(
     @Param('profileId') profileId: string,
     @Query('limit') limit?: number,
     @Query('offset') offset?: number,
     @Query('type') type?: string,
     @Query('direction') direction?: string,
+    @Query('since') since?: string,
   ) {
-    return this.service.findByProfile(profileId, { limit, offset, type, direction });
+    const sinceDate = since ? new Date(since) : undefined;
+    if (sinceDate && Number.isNaN(sinceDate.getTime())) {
+      throw new BadRequestException('since must be a valid ISO timestamp');
+    }
+    return this.service.findByProfile(profileId, { limit, offset, type, direction, since: sinceDate });
   }
 
   @Post('profile/:profileId/resolve-senders')

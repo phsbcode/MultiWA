@@ -358,10 +358,12 @@ export class MessagesService {
     offset?: number;
     type?: string;
     direction?: string;
+    since?: Date;
   }) {
     const where: any = { profileId };
     if (options.type) where.type = options.type;
     if (options.direction) where.direction = options.direction;
+    if (options.since) where.timestamp = { gte: options.since };
 
     return prisma.message.findMany({
       where,
