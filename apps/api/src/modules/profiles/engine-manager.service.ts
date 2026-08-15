@@ -54,25 +54,26 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
 
   /**
    * On module init:
-   * 1. Reset stale 'connected' profiles to 'disconnected'
+   * 1. Reset stale 'connected' or 'connecting' profiles to 'disconnected'
    * 2. Auto-reconnect profiles that have valid session data
    */
   async onModuleInit() {
     this.logger.log('EngineManagerService initializing...');
     
     try {
-      // Step 1: Reset all profiles that show as 'connected' in the database
-      // (since we just started, no engines are actually running)
+      // Step 1: Reset profiles whose persisted state says an engine was active.
+      // At process start no engines exist, including profiles left in 'connecting'
+      // by an unclean shutdown or a connection attempt that never completed.
       const staleProfiles = await prisma.profile.findMany({
-        where: { status: 'connected' },
+        where: { status: { in: ['connected', 'connecting'] } },
         select: { id: true, displayName: true },
       });
 
       if (staleProfiles.length > 0) {
-        this.logger.warn(`Found ${staleProfiles.length} stale 'connected' profiles, resetting to 'disconnected'`);
+        this.logger.warn(`Found ${staleProfiles.length} stale active profiles, resetting to 'disconnected'`);
         
         await prisma.profile.updateMany({
-          where: { status: 'connected' },
+          where: { status: { in: ['connected', 'connecting'] } },
           data: { status: 'disconnected' },
         });
 

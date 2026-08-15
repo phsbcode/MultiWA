@@ -92,6 +92,26 @@ describe('EngineManagerService engine selection', () => {
     expect(createEngine).not.toHaveBeenCalled();
   });
 
+  it('recovers profiles left connecting when the API process restarts', async () => {
+    vi.mocked(prisma.profile.findMany).mockResolvedValueOnce([
+      { id: 'profile-connecting', displayName: 'Recovering profile' },
+    ] as any);
+    vi.mocked(prisma.profile.updateMany).mockResolvedValue({ count: 1 } as any);
+    const reconnect = vi.spyOn(service as any, 'autoReconnectProfiles').mockResolvedValue(undefined);
+
+    await service.onModuleInit();
+
+    expect(prisma.profile.findMany).toHaveBeenCalledWith({
+      where: { status: { in: ['connected', 'connecting'] } },
+      select: { id: true, displayName: true },
+    });
+    expect(prisma.profile.updateMany).toHaveBeenCalledWith({
+      where: { status: { in: ['connected', 'connecting'] } },
+      data: { status: 'disconnected' },
+    });
+    expect(reconnect).toHaveBeenCalledWith(['profile-connecting']);
+  });
+
   it('updates a stored message when Baileys reports an edit', async () => {
     vi.mocked(prisma.profile.findUnique).mockResolvedValue({
       id: 'profile-baileys',
