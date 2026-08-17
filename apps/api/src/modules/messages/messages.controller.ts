@@ -164,6 +164,8 @@ export class MessagesController {
   @ApiQuery({ name: 'type', required: false, enum: ['text', 'image', 'video', 'audio', 'document', 'location', 'contact'] })
   @ApiQuery({ name: 'direction', required: false, enum: ['incoming', 'outgoing'] })
   @ApiQuery({ name: 'since', required: false, description: 'Return messages at or after this ISO timestamp' })
+  @ApiQuery({ name: 'includeMedia', required: false, enum: ['true', 'false'],
+    description: 'Set false to replace media payloads with fingerprints and byte sizes' })
   async findByProfile(
     @Param('profileId') profileId: string,
     @Query('limit') limit?: number,
@@ -171,12 +173,26 @@ export class MessagesController {
     @Query('type') type?: string,
     @Query('direction') direction?: string,
     @Query('since') since?: string,
+    @Query('includeMedia') includeMedia?: string,
   ) {
     const sinceDate = since ? new Date(since) : undefined;
     if (sinceDate && Number.isNaN(sinceDate.getTime())) {
       throw new BadRequestException('since must be a valid ISO timestamp');
     }
-    return this.service.findByProfile(profileId, { limit, offset, type, direction, since: sinceDate });
+    if (includeMedia !== undefined && includeMedia !== 'true' && includeMedia !== 'false') {
+      throw new BadRequestException('includeMedia must be true or false');
+    }
+    return this.service.findByProfile(profileId, { limit, offset, type, direction, since: sinceDate,
+      includeMedia: includeMedia !== 'false' });
+  }
+
+  @Post('profile/:profileId/media')
+  @ApiOperation({ summary: 'Get full media payloads for bounded profile message IDs' })
+  async findMediaByProfile(
+    @Param('profileId') profileId: string,
+    @Body() body: { ids?: string[] },
+  ) {
+    return this.service.findMediaByProfile(profileId, body?.ids || []);
   }
 
   @Post('profile/:profileId/resolve-senders')

@@ -1,6 +1,7 @@
 // MultiWA Gateway - Enhanced Messages Service
 // apps/api/src/modules/messages/messages.service.ts
 
+import { createHash } from 'node:crypto';
 import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import { 
@@ -16,7 +17,6 @@ import {
   SendPollDto,
 } from './dto';
 import { EngineManagerService } from '../profiles/engine-manager.service';
-
 
 @Injectable()
 export class MessagesService {
@@ -359,19 +359,54 @@ export class MessagesService {
     type?: string;
     direction?: string;
     since?: Date;
+    includeMedia?: boolean;
   }) {
     const where: any = { profileId };
     if (options.type) where.type = options.type;
     if (options.direction) where.direction = options.direction;
     if (options.since) where.timestamp = { gte: options.since };
 
-    return prisma.message.findMany({
+    const messages = await prisma.message.findMany({
       where,
       orderBy: { timestamp: 'desc' },
       take: options.limit || 50,
       skip: options.offset || 0,
       include: { conversation: true },
     });
+    if (options.includeMedia !== false) return messages;
+    return messages.map((message: any) => this.withoutMediaPayload(message));
+  }
+
+  async findMediaByProfile(profileId: string, ids: string[]) {
+    if (!Array.isArray(ids) || !ids.length || ids.length > 50) {
+      throw new BadRequestException('Supply between 1 and 50 message IDs.');
+    }
+    const uniqueIds = [...new Set(ids.map(value => String(value || '').trim()).filter(Boolean))];
+    if (!uniqueIds.length) throw new BadRequestException('Supply at least one message ID.');
+    const messages = await prisma.message.findMany({
+      where: { profileId, id: { in: uniqueIds } },
+      include: { conversation: true },
+    });
+    const byId = new Map(messages.map((message: any) => [String(message.id), message]));
+    return uniqueIds.map(id => byId.get(id)).filter(Boolean);
+  }
+
+  private withoutMediaPayload(message: any) {
+    const content = { ...(message.content || {}) };
+    const dataUrl = String(content.url || content.base64 || '');
+    const match = dataUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/);
+    let mediaFingerprint = '';
+    let mediaBytes = 0;
+    if (match) {
+      const mimeType = match[1].toLowerCase();
+      const base64 = match[2];
+      mediaFingerprint = createHash('sha256').update(`${mimeType}:${base64}`).digest('base64url');
+      mediaBytes = Math.max(0, Math.floor(base64.length * 3 / 4) - (base64.endsWith('==') ? 2 :
+        base64.endsWith('=') ? 1 : 0));
+    }
+    delete content.url;
+    delete content.base64;
+    return { ...message, content, mediaFingerprint, mediaBytes };
   }
 
   async resolveSenderPhones(profileId: string, jids: string[]) {
