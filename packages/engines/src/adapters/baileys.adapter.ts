@@ -24,7 +24,13 @@ import type {
 } from '../types';
 import { normalizeBaileysPresenceUpdate } from '../presence';
 import { shouldHandleBaileysDisconnect } from './baileys-lifecycle';
-import { normalizeBaileysInbound } from './baileys-inbound';
+import {
+  isBaileysProtocolMessage,
+  normalizeBaileysEditedMessage,
+  normalizeBaileysInbound,
+  normalizeBaileysProtocolEdit,
+} from './baileys-inbound';
+import { decryptBaileysSecretEdit } from './baileys-secret-edit';
 
 
 export class BaileysAdapter implements IWhatsAppEngine {
@@ -42,6 +48,142 @@ export class BaileysAdapter implements IWhatsAppEngine {
   private connectionRetryCount: number = 0;
   private maxConnectionRetries: number = 3;
   private isDestroying = false;
+  private phoneNumberShares = new Map<string, string>();
+  private messageCache = new Map<string, proto.IWebMessageInfo>();
+
+  private messageCacheKey(remoteJid: string | null | undefined, id: string | null | undefined): string {
+    return `${remoteJid || ''}:${id || ''}`;
+  }
+
+  private rememberMessage(message: proto.IWebMessageInfo): void {
+    if (!message.message || !message.key.id) return;
+    this.messageCache.set(
+      this.messageCacheKey(message.key.remoteJid, message.key.id),
+      message,
+    );
+    if (this.messageCache.size > 2000) {
+      const oldestKey = this.messageCache.keys().next().value;
+      if (oldestKey) this.messageCache.delete(oldestKey);
+    }
+  }
+
+  private eventDate(value: unknown): Date | undefined {
+    if (value === null || value === undefined) return undefined;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) return undefined;
+    const milliseconds = numeric > 10000000000 ? numeric : numeric * 1000;
+    const date = new Date(milliseconds);
+    return Number.isNaN(date.getTime()) ? undefined : date;
+  }
+
+  private canonicalJid(value: string | null | undefined): string | undefined {
+    if (!value) return undefined;
+    return this.phoneNumberShares.get(value) || value;
+  }
+
+  private async rememberPhoneNumberShare(lid: string | null | undefined, phoneJid: string | null | undefined) {
+    if (!lid?.endsWith('@lid') || !/^\d{7,15}@s\.whatsapp\.net$/i.test(phoneJid || '')) return;
+    if (this.phoneNumberShares.get(lid) === phoneJid) return;
+    this.phoneNumberShares.set(lid, phoneJid!);
+    await this.config?.onPhoneNumberShare?.({ lid, jid: phoneJid! });
+  }
+
+  async resolvePhoneJids(jids: string[]): Promise<Record<string, string>> {
+    const unique = [...new Set(jids.filter(value => value.toLowerCase().slice(-4) === '@' + 'lid'))];
+    const resolved: Record<string, string> = {};
+    for (const jid of unique) {
+      const cached = this.phoneNumberShares.get(jid);
+      if (cached) resolved[jid] = cached;
+    }
+    let missing = unique.filter(jid => !resolved[jid]);
+    if (missing.length && this.authState?.keys?.get) {
+      const reverseKeys = missing.map(jid => `${jid.split('@')[0].split(':')[0]}_reverse`);
+      const stored = await this.authState.keys.get('lid-mapping', reverseKeys);
+      for (const jid of missing) {
+        const user = jid.split('@')[0].split(':')[0];
+        const phone = stored[`${user}_reverse`];
+        if (typeof phone === 'string' && /^\d{7,15}$/.test(phone)) {
+          const phoneJid = `${phone}@s.whatsapp.net`;
+          resolved[jid] = phoneJid;
+          this.phoneNumberShares.set(jid, phoneJid);
+        }
+      }
+    }
+    missing = unique.filter(jid => !resolved[jid]);
+    const lidMapping = (this.socket as any)?.signalRepository?.lidMapping;
+    if (missing.length && lidMapping?.getPNsForLIDs) {
+      const mappings = await lidMapping.getPNsForLIDs(missing);
+      for (const mapping of mappings || []) {
+        if (mapping?.lid && mapping?.pn) {
+          resolved[mapping.lid] = mapping.pn;
+          this.phoneNumberShares.set(mapping.lid, mapping.pn);
+        }
+      }
+    }
+    missing = unique.filter(jid => !resolved[jid]);
+    if (missing.length && this.socket?.groupFetchAllParticipating) {
+      try {
+        const groups = await this.socket.groupFetchAllParticipating();
+        for (const group of Object.values(groups || {}) as any[]) {
+          for (const participant of group.participants || []) {
+            const lid = String(participant.lid ||
+              (String(participant.id || '').endsWith('@lid') ? participant.id : ''));
+            const phoneJid = String(participant.phoneNumber ||
+              (String(participant.id || '').endsWith('@s.whatsapp.net') ? participant.id : ''));
+            if (missing.includes(lid) && /^\d{7,15}@s\.whatsapp\.net$/i.test(phoneJid)) {
+              resolved[lid] = phoneJid;
+              this.phoneNumberShares.set(lid, phoneJid);
+            }
+          }
+        }
+      } catch {
+        // Group metadata is an optional final fallback; preserve any mappings already found.
+      }
+    }
+    return resolved;
+  }
+
+  private async emitInboundMessage(message: proto.IWebMessageInfo, historical: boolean): Promise<void> {
+    // A null payload is Baileys' CIPHERTEXT/unavailable placeholder. Baileys
+    // requests a retry itself; it is not a customer message and must not be
+    // persisted or trigger notifications/automations.
+    if (!message.message || message.key.fromMe || isBaileysProtocolMessage(message.message)) return;
+    this.rememberMessage(message);
+    const inbound = normalizeBaileysInbound(message.message);
+    const remoteJid = this.canonicalJid(message.key.remoteJid);
+    const keyWithAlt = message.key as proto.IMessageKey & {
+      participantAlt?: string | null;
+      remoteJidAlt?: string | null;
+    };
+    await this.rememberPhoneNumberShare(message.key.participant, keyWithAlt.participantAlt);
+    await this.rememberPhoneNumberShare(message.key.remoteJid, keyWithAlt.remoteJidAlt);
+    const participant = this.canonicalJid(message.key.participant) ||
+      this.canonicalJid(keyWithAlt.participantAlt);
+    await this.config?.onMessage?.({
+      id: message.key.id,
+      from: remoteJid,
+      to: this.socket?.user?.id,
+      body: inbound.body,
+      type: inbound.type,
+      timestamp: this.eventDate(message.messageTimestamp) || new Date(),
+      isGroup: remoteJid?.endsWith('@g.us') || false,
+      hasMedia: Boolean(inbound.media),
+      fromMe: false,
+      author: participant,
+      participant,
+      pushName: message.pushName,
+      isHistorical: historical,
+      quotedMessageId: inbound.quotedMessageId,
+      downloadMedia: inbound.media ? async () => {
+        const data = await downloadMediaMessage(message as any, 'buffer', {});
+        return {
+          data: data.toString('base64'),
+          mimetype: inbound.media?.mimetype || 'application/octet-stream',
+          filename: inbound.media?.filename,
+        };
+      } : undefined,
+    });
+  }
 
   async initialize(config: EngineConfig): Promise<void> {
     this.config = config;
@@ -71,6 +213,9 @@ export class BaileysAdapter implements IWhatsAppEngine {
       },
       printQRInTerminal: false,
       generateHighQualityLinkPreview: true,
+      getMessage: async key => this.messageCache.get(
+        this.messageCacheKey(key.remoteJid, key.id),
+      )?.message,
     });
 
     this.setupEventHandlers();
@@ -169,45 +314,71 @@ export class BaileysAdapter implements IWhatsAppEngine {
       }
     });
 
-    // Messages
-    this.socket.ev.on('messages.upsert', async ({ messages, type }) => {
-      if (type !== 'notify') return;
+    this.socket.ev.on('lid-mapping.update', ({ lid, pn }) => {
+      this.phoneNumberShares.set(lid, pn);
+      this.config?.onPhoneNumberShare?.({ lid, jid: pn });
+    });
 
-      for (const message of messages) {
-        if (message.key.fromMe) continue;
-
-        const inbound = normalizeBaileysInbound(message.message);
-
-        const transformedMessage = {
-          id: message.key.id,
-          from: message.key.remoteJid,
-          to: this.socket?.user?.id,
-          body: inbound.body,
-          type: inbound.type,
-          timestamp: new Date(
-            (message.messageTimestamp as number) * 1000
-          ),
-          isGroup: message.key.remoteJid?.endsWith('@g.us') || false,
-          hasMedia: Boolean(inbound.media),
-          fromMe: false,
-          author: message.key.participant,
-          participant: message.key.participant,
-          pushName: message.pushName,
-          downloadMedia: inbound.media ? async () => {
-            const data = await downloadMediaMessage(message, 'buffer', {});
-            return {
-              data: data.toString('base64'),
-              mimetype: inbound.media?.mimetype || 'application/octet-stream',
-              filename: inbound.media?.filename,
-            };
-          } : undefined,
-        };
-
-        this.config?.onMessage?.(transformedMessage);
+    this.socket.ev.on('messaging-history.set', async ({ messages }) => {
+      // Baileys supplies this array newest-first. Bound replay work so a fresh
+      // connection cannot overwhelm persistence or media download quotas.
+      const recentMessages = messages.slice(0, 500);
+      for (let offset = 0; offset < recentMessages.length; offset += 5) {
+        await Promise.all(
+          recentMessages.slice(offset, offset + 5)
+            .map(message => this.emitInboundMessage(message, true)),
+        );
       }
     });
 
-    // Message status
+    // Messages
+    this.socket.ev.on('messages.upsert', async ({ messages, type }) => {
+      for (const message of messages) {
+        const secretEdit = message.message?.secretEncryptedMessage;
+        if (secretEdit?.targetMessageKey?.id) {
+          const original = this.messageCache.get(this.messageCacheKey(
+            secretEdit.targetMessageKey.remoteJid || message.key.remoteJid,
+            secretEdit.targetMessageKey.id,
+          ));
+          const decrypted = decryptBaileysSecretEdit(message, original);
+          if (decrypted) {
+            console.log(
+              `[Baileys] Secret edit profile=${this.config?.profileId} target=${decrypted.messageId} type=${decrypted.type} bodyLength=${decrypted.body.length}`,
+            );
+            await this.config?.onMessageEdit?.({
+              messageId: decrypted.messageId,
+              body: decrypted.body,
+              type: decrypted.type,
+              editedAt: this.eventDate(message.messageTimestamp),
+            });
+            continue;
+          }
+          // This is an encrypted edit envelope, not a new chat message. If the
+          // original is no longer in the bounded cache, leave the existing row
+          // unchanged instead of creating a misleading `unknown` message.
+          console.warn(
+            `[Baileys] Secret edit unavailable profile=${this.config?.profileId} target=${secretEdit.targetMessageKey.id}`,
+          );
+          continue;
+        }
+        const protocolEdit = normalizeBaileysProtocolEdit(message.message);
+        if (protocolEdit) {
+          console.log(
+            `[Baileys] Edit upsert profile=${this.config?.profileId} target=${protocolEdit.messageId} type=${protocolEdit.inbound.type} bodyLength=${protocolEdit.inbound.body.length}`,
+          );
+          await this.config?.onMessageEdit?.({
+            messageId: protocolEdit.messageId,
+            body: protocolEdit.inbound.body,
+            type: protocolEdit.inbound.type,
+            editedAt: this.eventDate(protocolEdit.timestampMs),
+          });
+          continue;
+        }
+        await this.emitInboundMessage(message, type === 'append');
+      }
+    });
+
+    // Message status, edits, revokes, and poll changes
     this.socket.ev.on('messages.update', (updates) => {
       for (const update of updates) {
         if (update.update.status) {
@@ -222,7 +393,75 @@ export class BaileysAdapter implements IWhatsAppEngine {
             statusMap[update.update.status] || 'unknown'
           );
         }
+        const edited = normalizeBaileysEditedMessage(update.update.message);
+        if (edited && update.key.id) {
+          console.log(
+            `[Baileys] Edit update profile=${this.config?.profileId} target=${update.key.id} type=${edited.type} bodyLength=${edited.body.length}`,
+          );
+          void this.config?.onMessageEdit?.({
+            messageId: update.key.id,
+            body: edited.body,
+            type: edited.type,
+            editedAt: this.eventDate(update.update.messageTimestamp),
+          });
+        }
+        if (update.key.id && update.update.message === null) {
+          this.config?.onMessageDelete?.({
+            messageIds: [update.key.id],
+            deletedAt: new Date(),
+          });
+        }
       }
+    });
+
+    this.socket.ev.on('messages.delete', event => {
+      if ('all' in event) {
+        this.config?.onMessageDelete?.({ jid: event.jid, all: true, deletedAt: new Date() });
+        return;
+      }
+      this.config?.onMessageDelete?.({
+        messageIds: event.keys.map(key => key.id || '').filter(Boolean),
+        deletedAt: new Date(),
+      });
+    });
+
+    this.socket.ev.on('messages.reaction', events => {
+      events.forEach(({ key, reaction }) => {
+        if (!key.id) return;
+        const senderJid = this.canonicalJid(reaction.key?.participant || reaction.key?.remoteJid) || '';
+        this.config?.onMessageReaction?.({
+          messageId: key.id,
+          reactionId: reaction.key?.id || `${key.id}:reaction:${senderJid}`,
+          senderJid,
+          emoji: reaction.text || '',
+          timestamp: this.eventDate(reaction.senderTimestampMs),
+          fromMe: Boolean(reaction.key?.fromMe),
+        });
+      });
+    });
+
+    this.socket.ev.on('message-receipt.update', events => {
+      events.forEach(({ key, receipt }) => {
+        if (!key.id || !receipt.userJid) return;
+        this.config?.onMessageReceipt?.({
+          messageId: key.id,
+          participantJid: this.canonicalJid(receipt.userJid) || receipt.userJid,
+          deliveredAt: this.eventDate(receipt.receiptTimestamp),
+          readAt: this.eventDate(receipt.readTimestamp),
+          playedAt: this.eventDate(receipt.playedTimestamp),
+        });
+      });
+    });
+
+    this.socket.ev.on('messages.media-update', events => {
+      events.forEach(event => {
+        if (!event.key.id) return;
+        this.config?.onMediaUpdate?.({
+          messageId: event.key.id,
+          available: Boolean(event.media) && !event.error,
+          error: event.error?.message,
+        });
+      });
     });
   }
 

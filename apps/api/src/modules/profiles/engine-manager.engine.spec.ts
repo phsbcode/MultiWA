@@ -24,9 +24,17 @@ vi.mock('@multiwa/database', () => ({
       update: vi.fn(),
       updateMany: vi.fn(),
     },
-    conversation: { findFirst: vi.fn(), update: vi.fn() },
+    conversation: { findFirst: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
     contact: { findFirst: vi.fn(), create: vi.fn() },
-    message: { findUnique: vi.fn(), update: vi.fn() },
+    message: {
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      findUnique: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      delete: vi.fn(),
+    },
   },
 }));
 
@@ -38,10 +46,12 @@ describe('EngineManagerService engine selection', () => {
     emitQrUpdate: vi.fn(),
     emitConnectionStatus: vi.fn(),
     emitMessage: vi.fn(),
+    emitMessageUpdate: vi.fn(),
     emitMessageAck: vi.fn(),
     emitPresence: vi.fn(),
   };
   let service: EngineManagerService;
+  const hooksService = { emit: vi.fn() };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -53,7 +63,7 @@ describe('EngineManagerService engine selection', () => {
       eventsGateway as any,
       { processMessage: vi.fn() } as any,
       { createForOrg: vi.fn() } as any,
-      { emit: vi.fn() } as any,
+      hooksService as any,
       { handleIncomingMessage: vi.fn() } as any,
     );
   });
@@ -81,5 +91,148 @@ describe('EngineManagerService engine selection', () => {
 
     expect(prisma.profile.findMany).toHaveBeenCalledOnce();
     expect(createEngine).not.toHaveBeenCalled();
+  });
+
+  it('recovers profiles left connecting when the API process restarts', async () => {
+    vi.mocked(prisma.profile.findMany).mockResolvedValueOnce([
+      { id: 'profile-connecting', displayName: 'Recovering profile' },
+    ] as any);
+    vi.mocked(prisma.profile.updateMany).mockResolvedValue({ count: 1 } as any);
+    const reconnect = vi.spyOn(service as any, 'autoReconnectProfiles').mockResolvedValue(undefined);
+
+    await service.onModuleInit();
+
+    expect(prisma.profile.findMany).toHaveBeenCalledWith({
+      where: { status: { in: ['connected', 'connecting'] } },
+      select: { id: true, displayName: true },
+    });
+    expect(prisma.profile.updateMany).toHaveBeenCalledWith({
+      where: { status: { in: ['connected', 'connecting'] } },
+      data: { status: 'disconnected' },
+    });
+    expect(reconnect).toHaveBeenCalledWith(['profile-connecting']);
+  });
+
+  it('updates a stored message when Baileys reports an edit', async () => {
+    vi.mocked(prisma.profile.findUnique).mockResolvedValue({
+      id: 'profile-baileys',
+      settings: { engine: 'baileys' },
+    } as any);
+    vi.mocked(prisma.message.findMany).mockResolvedValue([{
+      id: 'database-message',
+      messageId: 'provider-message',
+      conversationId: 'group-conversation',
+      senderJid: '60123456789@s.whatsapp.net',
+      type: 'text',
+      content: { text: 'Original' },
+      metadata: {},
+    }] as any);
+    vi.mocked(prisma.conversation.findUnique).mockResolvedValue({
+      id: 'group-conversation',
+      jid: '120363000000000000@g.us',
+      name: 'TEST Group',
+      type: 'group',
+    } as any);
+    vi.mocked(prisma.message.update).mockResolvedValue({
+      id: 'database-message',
+      messageId: 'provider-message',
+      content: { text: 'Expanded edited message' },
+    } as any);
+
+    await service.connectProfile('profile-baileys');
+    const config = engine.initialize.mock.calls[0][0];
+    await config.onMessageEdit({
+      messageId: 'provider-message',
+      body: 'Expanded edited message',
+      type: 'text',
+      editedAt: new Date('2026-08-05T10:00:00Z'),
+    });
+
+    expect(prisma.message.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'database-message' },
+      data: expect.objectContaining({
+        content: { text: 'Expanded edited message' },
+        metadata: expect.objectContaining({ isEdited: true }),
+      }),
+    }));
+    expect(eventsGateway.emitMessageUpdate).toHaveBeenCalledOnce();
+    expect(hooksService.emit).toHaveBeenCalledWith('message.edited', expect.objectContaining({
+      profileId: 'profile-baileys',
+      messageId: 'provider-message',
+      isGroup: true,
+      conversationId: 'group-conversation',
+      chatJid: '120363000000000000@g.us',
+    }));
+  });
+
+  it('persists replayed history once without firing live-message side effects', async () => {
+    vi.mocked(prisma.profile.findUnique).mockResolvedValue({
+      id: 'profile-baileys',
+      settings: { engine: 'baileys' },
+    } as any);
+    vi.mocked(prisma.message.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.conversation.findFirst).mockResolvedValue({
+      id: 'conversation',
+      jid: '60123456789@s.whatsapp.net',
+      lastMessageAt: null,
+    } as any);
+    vi.mocked(prisma.message.create).mockResolvedValue({ id: 'database-message' } as any);
+    vi.mocked(prisma.conversation.update).mockResolvedValue({} as any);
+
+    await service.connectProfile('profile-baileys');
+    const config = engine.initialize.mock.calls[0][0];
+    const replayedMessage = {
+      id: 'history-message',
+      from: '60123456789@s.whatsapp.net',
+      body: 'Past payment context',
+      type: 'text',
+      timestamp: new Date('2026-08-04T10:00:00Z'),
+      isHistorical: true,
+      fromMe: false,
+    };
+    await Promise.all([
+      config.onMessage(replayedMessage),
+      config.onMessage(replayedMessage),
+    ]);
+
+    expect(prisma.message.create).toHaveBeenCalledOnce();
+    expect(prisma.conversation.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.not.objectContaining({ unreadCount: expect.anything() }),
+    }));
+    expect(eventsGateway.emitMessage).not.toHaveBeenCalled();
+  });
+
+  it('persists inbound quoted-message linkage for reply-aware consumers', async () => {
+    vi.mocked(prisma.profile.findUnique).mockResolvedValue({
+      id: 'profile-baileys',
+      settings: { engine: 'baileys' },
+    } as any);
+    vi.mocked(prisma.message.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.conversation.findFirst).mockResolvedValue({
+      id: 'conversation',
+      jid: 'payment-group@g.us',
+      lastMessageAt: null,
+    } as any);
+    vi.mocked(prisma.message.create).mockResolvedValue({ id: 'database-message' } as any);
+    vi.mocked(prisma.conversation.update).mockResolvedValue({} as any);
+
+    await service.connectProfile('profile-baileys');
+    const config = engine.initialize.mock.calls[0][0];
+    await config.onMessage({
+      id: 'reply-message',
+      from: 'payment-group@g.us',
+      author: '60123456789@s.whatsapp.net',
+      body: 'Payment context',
+      type: 'text',
+      timestamp: new Date('2026-08-05T10:00:00Z'),
+      quotedMessageId: 'quoted-slip-message',
+      isGroup: true,
+      isHistorical: true,
+      fromMe: false,
+    });
+
+    expect(prisma.message.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ quotedMessageId: 'quoted-slip-message' }),
+    }));
   });
 });

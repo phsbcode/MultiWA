@@ -162,7 +162,6 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
 
       const chatJid = chat?.id?._serialized || message.from;
       const isGroup = Boolean(chat?.isGroup || chatJid?.includes('@g.us') || message.from?.includes('@g.us'));
-      
       const transformedMessage = {
         id: message.id,
         _serialized: message.id._serialized,
@@ -860,4 +859,3 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     }
   }
 }
-

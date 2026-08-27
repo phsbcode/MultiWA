@@ -78,6 +78,8 @@ Default section order:
 
 When the user requests a durable behavior change, record it here or in the relevant child AGENTS.md
 
+- After Docker build, rebuild, or image-testing work, remove unused build cache and disposable intermediate images. Preserve containers, volumes, active images, and explicitly retained rollback images; then verify container health and disk usage and report the recovered space.
+
 ## Global Workflow Rules
 
 - MultiWA is a pnpm monorepo managed with Turborepo

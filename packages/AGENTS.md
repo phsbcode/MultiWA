@@ -24,6 +24,10 @@ Shared libraries, domain logic, database layer, WhatsApp engine adapters, SDKs, 
 - `engines/` factory (`src/factory/engine-factory.ts`) selects adapter by profile type
 - `engines/` normalizes provider presence into canonical chat/participant JIDs; only adapters with documented inbound presence events emit it. whatsapp-web.js currently supports outbound chat state only and must not fabricate inbound presence.
 - `engines/` normalizes Baileys ephemeral/view-once wrappers before classifying inbound messages and exposes downloadable media to API consumers.
+- `engines/` preserves the quoted provider message ID from Baileys context metadata so downstream consumers can distinguish replies from unrelated new messages.
+- `engines/` exposes typed Baileys callbacks for message edits/deletions/reactions, bounded history replay, LID-to-phone mapping, participant receipts, and media availability updates. Replayed history must remain marked as historical so consumers can suppress live-message side effects.
+- Engines may expose a read-only trusted provider-identity resolver; Baileys resolves persisted LID identities through its encrypted session mapping store and never treats the LID digits themselves as a phone number.
+- Modern Baileys `secretEncryptedMessage` edits use a bounded, memory-only raw-message cache for decryption. Never persist encrypted edit envelopes as customer messages or expose their key material.
 - SDKs must track the API spec in `docs/07-api-specification.md`
 - All packages use TypeScript strict mode and are built with `tsc`
 

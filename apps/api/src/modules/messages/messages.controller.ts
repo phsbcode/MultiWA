@@ -1,7 +1,7 @@
 // MultiWA Gateway - Enhanced Messages Controller
 // apps/api/src/modules/messages/messages.controller.ts
 
-import { Controller, Get, Post, Delete, Put, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Post, Delete, Put, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { MessagesService } from './messages.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
@@ -163,14 +163,45 @@ export class MessagesController {
   @ApiQuery({ name: 'offset', required: false })
   @ApiQuery({ name: 'type', required: false, enum: ['text', 'image', 'video', 'audio', 'document', 'location', 'contact'] })
   @ApiQuery({ name: 'direction', required: false, enum: ['incoming', 'outgoing'] })
+  @ApiQuery({ name: 'since', required: false, description: 'Return messages at or after this ISO timestamp' })
+  @ApiQuery({ name: 'includeMedia', required: false, enum: ['true', 'false'],
+    description: 'Set false to replace media payloads with fingerprints and byte sizes' })
   async findByProfile(
     @Param('profileId') profileId: string,
     @Query('limit') limit?: number,
     @Query('offset') offset?: number,
     @Query('type') type?: string,
     @Query('direction') direction?: string,
+    @Query('since') since?: string,
+    @Query('includeMedia') includeMedia?: string,
   ) {
-    return this.service.findByProfile(profileId, { limit, offset, type, direction });
+    const sinceDate = since ? new Date(since) : undefined;
+    if (sinceDate && Number.isNaN(sinceDate.getTime())) {
+      throw new BadRequestException('since must be a valid ISO timestamp');
+    }
+    if (includeMedia !== undefined && includeMedia !== 'true' && includeMedia !== 'false') {
+      throw new BadRequestException('includeMedia must be true or false');
+    }
+    return this.service.findByProfile(profileId, { limit, offset, type, direction, since: sinceDate,
+      includeMedia: includeMedia !== 'false' });
+  }
+
+  @Post('profile/:profileId/media')
+  @ApiOperation({ summary: 'Get full media payloads for bounded profile message IDs' })
+  async findMediaByProfile(
+    @Param('profileId') profileId: string,
+    @Body() body: { ids?: string[] },
+  ) {
+    return this.service.findMediaByProfile(profileId, body?.ids || []);
+  }
+
+  @Post('profile/:profileId/resolve-senders')
+  @ApiOperation({ summary: 'Resolve provider sender identities to phone numbers' })
+  async resolveSenderPhones(
+    @Param('profileId') profileId: string,
+    @Body() body: { jids?: string[] },
+  ) {
+    return this.service.resolveSenderPhones(profileId, body?.jids || []);
   }
 
   // Get messages by conversation

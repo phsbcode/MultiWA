@@ -23,6 +23,7 @@ Also owns root-level:
 
 - Root `Dockerfile` builds `api` and `admin` targets from the monorepo
 - Docker Compose uses environment variables from `.env.docker` or `.env`
+- The API host port is bound to `127.0.0.1`; public access must pass through the HTTPS reverse proxy
 - Caddy handles TLS and reverse proxy in production
 - Minio and Nginx are optional services
 

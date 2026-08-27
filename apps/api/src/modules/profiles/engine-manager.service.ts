@@ -29,10 +29,17 @@ interface EngineInstance {
   status: 'connecting' | 'connected' | 'disconnected';
 }
 
+function jsonObject(value: unknown): Record<string, any> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? { ...(value as Record<string, any>) }
+    : {};
+}
+
 @Injectable()
 export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   private readonly logger = new Logger(EngineManagerService.name);
   private engines = new Map<string, EngineInstance>();
+  private processingInboundMessageKeys = new Set<string>();
 
   constructor(
     private readonly eventsGateway: EventsGateway,
@@ -47,25 +54,26 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
 
   /**
    * On module init:
-   * 1. Reset stale 'connected' profiles to 'disconnected'
+   * 1. Reset stale 'connected' or 'connecting' profiles to 'disconnected'
    * 2. Auto-reconnect profiles that have valid session data
    */
   async onModuleInit() {
     this.logger.log('EngineManagerService initializing...');
     
     try {
-      // Step 1: Reset all profiles that show as 'connected' in the database
-      // (since we just started, no engines are actually running)
+      // Step 1: Reset profiles whose persisted state says an engine was active.
+      // At process start no engines exist, including profiles left in 'connecting'
+      // by an unclean shutdown or a connection attempt that never completed.
       const staleProfiles = await prisma.profile.findMany({
-        where: { status: 'connected' },
+        where: { status: { in: ['connected', 'connecting'] } },
         select: { id: true, displayName: true },
       });
 
       if (staleProfiles.length > 0) {
-        this.logger.warn(`Found ${staleProfiles.length} stale 'connected' profiles, resetting to 'disconnected'`);
+        this.logger.warn(`Found ${staleProfiles.length} stale active profiles, resetting to 'disconnected'`);
         
         await prisma.profile.updateMany({
-          where: { status: 'connected' },
+          where: { status: { in: ['connected', 'connecting'] } },
           data: { status: 'disconnected' },
         });
 
@@ -231,6 +239,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       }
     }
     this.engines.clear();
+  }
+
+  getCachedQrCode(profileId: string): string | undefined {
+    return this.eventsGateway.getCachedQr(profileId);
   }
 
   /**
@@ -441,7 +453,30 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         this.logger.debug(
           `Incoming message metadata profile=${profileId} from=${message.from} type=${message.type} hasBody=${Boolean(message.body)} hasMedia=${Boolean(message.hasMedia)}`,
         );
+        const providerMessageId = message.id?._serialized || message.id || '';
+        const processingKey = providerMessageId ? `${profileId}:${providerMessageId}` : '';
+        if (processingKey && this.processingInboundMessageKeys.has(processingKey)) {
+          this.logger.debug(`Skipping concurrent duplicate WhatsApp message ${providerMessageId}`);
+          return;
+        }
+        if (processingKey) this.processingInboundMessageKeys.add(processingKey);
         try {
+          if (providerMessageId) {
+            const existingMessage = await prisma.message.findFirst({
+              where: { profileId, messageId: providerMessageId },
+              select: { id: true, quotedMessageId: true },
+            });
+            if (existingMessage) {
+              if (!existingMessage.quotedMessageId && message.quotedMessageId) {
+                await prisma.message.update({
+                  where: { id: existingMessage.id },
+                  data: { quotedMessageId: String(message.quotedMessageId) },
+                });
+              }
+              this.logger.debug(`Skipping duplicate WhatsApp message ${providerMessageId}`);
+              return;
+            }
+          }
           // Determine message type and content
           const msgType = message.type || 'chat';
           const senderIdentity = resolveSenderIdentity(message);
@@ -583,34 +618,37 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             }
           }
 
+          const messageTimestamp = (() => {
+            if (!message.timestamp) return new Date();
+            // whatsapp-web.js timestamp can be in seconds or milliseconds
+            const ts = Number(message.timestamp);
+            const msTs = ts > 10000000000 ? ts : ts * 1000;
+            const date = new Date(msTs);
+            if (isNaN(date.getTime()) || date.getFullYear() > 2100 || date.getFullYear() < 2000) {
+              return new Date();
+            }
+            return date;
+          })();
+
           // Save message to database
           const savedMessage = await prisma.message.create({
             data: {
               profileId,
               conversationId: conversation.id,
-              messageId: message.id?._serialized || message.id || `in_${Date.now()}`,
+              messageId: providerMessageId || `in_${Date.now()}`,
               direction: 'incoming',
               senderJid,
               type: msgType === 'chat' ? 'text' : msgType,
               content,
+              quotedMessageId: message.quotedMessageId ? String(message.quotedMessageId) : null,
               status: 'received',
               metadata: {
                 senderName,
                 senderPhone,
                 originalSenderJid,
+                historical: Boolean(message.isHistorical),
               },
-              timestamp: (() => {
-                if (!message.timestamp) return new Date();
-                // whatsapp-web.js timestamp can be in seconds or milliseconds
-                const ts = Number(message.timestamp);
-                const msTs = ts > 10000000000 ? ts : ts * 1000; // if > 10B, already ms
-                const date = new Date(msTs);
-                // Guard against invalid dates (e.g. year > 2100 or < 2000)
-                if (isNaN(date.getTime()) || date.getFullYear() > 2100 || date.getFullYear() < 2000) {
-                  return new Date();
-                }
-                return date;
-              })(),
+              timestamp: messageTimestamp,
             },
           });
 
@@ -618,10 +656,16 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           await prisma.conversation.update({
             where: { id: conversation.id },
             data: {
-              lastMessageAt: new Date(),
-              unreadCount: { increment: 1 },
+              ...(conversation.lastMessageAt && conversation.lastMessageAt > messageTimestamp
+                ? {}
+                : { lastMessageAt: messageTimestamp }),
+              ...(message.isHistorical ? {} : { unreadCount: { increment: 1 } }),
             },
           });
+
+          // History and append replays are persistence-only. Never emit hooks,
+          // notifications, automations, AI replies, or unread increments.
+          if (message.isHistorical) return;
 
           // Emit via WebSocket for real-time chat
           this.eventsGateway.emitMessage(profileId, {
@@ -755,6 +799,207 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           }
         } catch (error) {
           this.logger.error(`Error processing incoming message:`, error);
+        } finally {
+          if (processingKey) this.processingInboundMessageKeys.delete(processingKey);
+        }
+      },
+      onMessageEdit: async event => {
+        if (!event.messageId || (event.type === 'unknown' && !event.body)) return;
+        try {
+          const messages = await prisma.message.findMany({
+            where: { profileId, messageId: event.messageId },
+          });
+          this.logger.debug(
+            `Applying message edit profile=${profileId} target=${event.messageId} matches=${messages.length} type=${event.type} bodyLength=${event.body.length}`,
+          );
+          for (const message of messages) {
+            const content = jsonObject(message.content);
+            if (['image', 'video', 'document'].includes(message.type)) content.caption = event.body;
+            content.text = event.body;
+            const metadata = jsonObject(message.metadata);
+            metadata.isEdited = true;
+            metadata.editedAt = (event.editedAt || new Date()).toISOString();
+            const updated = await prisma.message.update({
+              where: { id: message.id },
+              data: {
+                type: event.type === 'unknown' ? message.type : event.type,
+                content,
+                metadata,
+              },
+            });
+            this.eventsGateway.emitMessageUpdate(profileId, updated);
+            const conversation = await prisma.conversation.findUnique({
+              where: { id: message.conversationId },
+              select: { id: true, jid: true, name: true, type: true },
+            });
+            this.hooksService.emit(AppEvent.MESSAGE_EDITED, {
+              profileId,
+              messageId: message.messageId || event.messageId,
+              senderJid: message.senderJid || '',
+              type: updated.type,
+              content: updated.content,
+              timestamp: event.editedAt || new Date(),
+              isGroup: conversation?.type === 'group',
+              conversationId: message.conversationId,
+              chatJid: conversation?.jid || '',
+              groupName: conversation?.name || '',
+            });
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to apply message edit: ${(error as Error).message}`);
+        }
+      },
+      onMessageDelete: async event => {
+        try {
+          let messages = [] as Awaited<ReturnType<typeof prisma.message.findMany>>;
+          if ('messageIds' in event) {
+            if (!event.messageIds.length) return;
+            messages = await prisma.message.findMany({
+              where: { profileId, messageId: { in: event.messageIds } },
+            });
+          } else {
+            const conversation = await prisma.conversation.findFirst({
+              where: { profileId, jid: event.jid },
+              select: { id: true },
+            });
+            if (!conversation) return;
+            messages = await prisma.message.findMany({
+              where: { profileId, conversationId: conversation.id },
+              take: 5000,
+            });
+          }
+          for (const message of messages) {
+            const metadata = jsonObject(message.metadata);
+            metadata.isDeleted = true;
+            metadata.deletedAt = event.deletedAt.toISOString();
+            const updated = await prisma.message.update({
+              where: { id: message.id },
+              data: {
+                type: 'text',
+                content: { text: 'This message was deleted', deleted: true },
+                metadata,
+              },
+            });
+            this.eventsGateway.emitMessageUpdate(profileId, updated);
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to apply message deletion: ${(error as Error).message}`);
+        }
+      },
+      onMessageReaction: async event => {
+        if (!event.messageId || !event.reactionId) return;
+        try {
+          const target = await prisma.message.findFirst({
+            where: { profileId, messageId: event.messageId },
+          });
+          if (!target) return;
+          const existing = await prisma.message.findFirst({
+            where: { profileId, messageId: event.reactionId },
+          });
+          if (!event.emoji) {
+            if (existing) await prisma.message.delete({ where: { id: existing.id } });
+            return;
+          }
+          const data = {
+            profileId,
+            conversationId: target.conversationId,
+            messageId: event.reactionId,
+            direction: event.fromMe ? 'outgoing' : 'incoming',
+            senderJid: event.senderJid,
+            type: 'reaction',
+            content: { messageId: event.messageId, emoji: event.emoji },
+            status: 'received',
+            timestamp: event.timestamp || new Date(),
+            metadata: { reaction: true },
+          };
+          const saved = existing
+            ? await prisma.message.update({ where: { id: existing.id }, data })
+            : await prisma.message.create({ data });
+          this.eventsGateway.emitMessage(profileId, { type: 'message:received', message: saved });
+        } catch (error) {
+          this.logger.warn(`Failed to apply message reaction: ${(error as Error).message}`);
+        }
+      },
+      onPhoneNumberShare: async event => {
+        try {
+          await prisma.message.updateMany({
+            where: { profileId, senderJid: event.lid },
+            data: { senderJid: event.jid },
+          });
+          const conversations = await prisma.conversation.findMany({
+            where: { profileId, jid: event.lid },
+          });
+          let phoneConversation = await prisma.conversation.findFirst({
+            where: { profileId, jid: event.jid },
+          });
+          for (const conversation of conversations) {
+            if (phoneConversation && phoneConversation.id !== conversation.id) {
+              await prisma.message.updateMany({
+                where: { profileId, conversationId: conversation.id },
+                data: { conversationId: phoneConversation.id },
+              });
+              phoneConversation = await prisma.conversation.update({
+                where: { id: phoneConversation.id },
+                data: {
+                  unreadCount: { increment: conversation.unreadCount },
+                  lastMessageAt: !phoneConversation.lastMessageAt
+                    || (conversation.lastMessageAt && conversation.lastMessageAt > phoneConversation.lastMessageAt)
+                    ? conversation.lastMessageAt
+                    : phoneConversation.lastMessageAt,
+                  metadata: { ...jsonObject(phoneConversation.metadata), phoneNumberJid: event.jid },
+                },
+              });
+              await prisma.conversation.delete({ where: { id: conversation.id } });
+            } else {
+              phoneConversation = await prisma.conversation.update({
+                where: { id: conversation.id },
+                data: {
+                  jid: event.jid,
+                  metadata: { ...jsonObject(conversation.metadata), phoneNumberJid: event.jid },
+                },
+              });
+            }
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to apply phone-number share: ${(error as Error).message}`);
+        }
+      },
+      onMessageReceipt: async event => {
+        try {
+          const messages = await prisma.message.findMany({
+            where: { profileId, messageId: event.messageId },
+          });
+          for (const message of messages) {
+            const metadata = jsonObject(message.metadata);
+            const receipts = jsonObject(metadata.receipts);
+            receipts[event.participantJid] = {
+              deliveredAt: event.deliveredAt?.toISOString(),
+              readAt: event.readAt?.toISOString(),
+              playedAt: event.playedAt?.toISOString(),
+            };
+            metadata.receipts = receipts;
+            await prisma.message.update({ where: { id: message.id }, data: { metadata } });
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to apply message receipt: ${(error as Error).message}`);
+        }
+      },
+      onMediaUpdate: async event => {
+        try {
+          const messages = await prisma.message.findMany({
+            where: { profileId, messageId: event.messageId },
+          });
+          for (const message of messages) {
+            const metadata = jsonObject(message.metadata);
+            metadata.mediaUpdate = {
+              available: event.available,
+              updatedAt: new Date().toISOString(),
+              ...(event.error ? { error: event.error.slice(0, 200) } : {}),
+            };
+            await prisma.message.update({ where: { id: message.id }, data: { metadata } });
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to apply media update: ${(error as Error).message}`);
         }
       },
       onMessageAck: async (messageId: string, status: string) => {

@@ -10,6 +10,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 export enum AppEvent {
   // Message events
   MESSAGE_RECEIVED = 'message.received',
+  MESSAGE_EDITED = 'message.edited',
   MESSAGE_SENT = 'message.sent',
   MESSAGE_FAILED = 'message.failed',
 
@@ -37,6 +38,8 @@ export interface HookRegistration {
   url: string;
   events: string[]; // List of AppEvent values to subscribe to, or ['*'] for all
   secret?: string;  // Optional HMAC signing secret
+  signatureInBody?: boolean; // Mirror HMAC into JSON for receivers without header access
+  timeoutMs?: number; // Per-hook delivery timeout; defaults to 10 seconds
   active: boolean;
   createdAt: Date;
 }
@@ -73,12 +76,15 @@ export class HooksService implements OnModuleInit {
   /**
    * Register a new webhook hook.
    */
-  async registerHook(url: string, events: string[], secret?: string): Promise<HookRegistration> {
+  async registerHook(url: string, events: string[], secret?: string,
+    signatureInBody = false, timeoutMs = 10000): Promise<HookRegistration> {
     const hook: HookRegistration = {
       id: `hook_${Date.now()}_${Math.random().toString(36).substring(7)}`,
       url,
       events,
       secret,
+      signatureInBody,
+      timeoutMs: Math.max(1000, Math.min(60000, Number(timeoutMs) || 10000)),
       active: true,
       createdAt: new Date(),
     };
@@ -119,11 +125,12 @@ export class HooksService implements OnModuleInit {
 
     if (matchingHooks.length === 0) return;
 
-    const body = JSON.stringify({
+    const envelope = {
       event,
       timestamp: new Date().toISOString(),
       data: payload,
-    });
+    };
+    const unsignedBody = JSON.stringify(envelope);
 
     const promises = matchingHooks.map(async (hook) => {
       try {
@@ -133,20 +140,29 @@ export class HooksService implements OnModuleInit {
         };
 
         // HMAC signing if secret is configured
+        let signature = '';
         if (hook.secret) {
           const crypto = await import('crypto');
-          const signature = crypto
+          signature = crypto
             .createHmac('sha256', hook.secret)
-            .update(body)
+            .update(unsignedBody)
             .digest('hex');
           headers['X-Webhook-Signature'] = `sha256=${signature}`;
         }
+
+        // Apps Script web apps cannot read arbitrary request headers. Keep the
+        // header for normal consumers and mirror its proof into the JSON body
+        // so constrained receivers can verify the exact unsigned envelope.
+        const body = hook.signatureInBody && signature ? JSON.stringify({
+          ...envelope, signature: `sha256=${signature}`,
+        }) : unsignedBody;
 
         const response = await fetch(hook.url, {
           method: 'POST',
           headers,
           body,
-          signal: AbortSignal.timeout(10_000), // 10s timeout
+          signal: AbortSignal.timeout(Math.max(1000,
+            Math.min(60000, Number(hook.timeoutMs) || 10000))),
         });
 
         if (!response.ok) {

@@ -1491,7 +1491,8 @@ function PushNotificationCard() {
     if (result?.success) {
       toast({ title: 'Test push sent!', description: `${result.message}. Check browser notifications.` });
     } else {
-      const errorDetail = result?.results?.[0]?.error || result?.error || result?.message || 'Could not send test push';
+      const diagnostics = result as { results?: Array<{ error?: string }>; error?: string; message?: string } | null;
+      const errorDetail = diagnostics?.results?.[0]?.error || diagnostics?.error || diagnostics?.message || 'Could not send test push';
       toast({ title: 'Test failed', description: errorDetail, variant: 'destructive' });
     }
   };
@@ -1555,4 +1556,3 @@ function PushNotificationCard() {
     </div>
   );
 }
-

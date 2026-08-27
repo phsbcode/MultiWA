@@ -83,7 +83,7 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       S3_BUCKET: ${S3_BUCKET:-multiwa-media}
     ports:
-      - "${API_PORT:-3333}:3333"
+      - "127.0.0.1:${API_PORT:-3333}:3333"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -95,11 +95,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: 
-        [
-      	  "CMD-SHELL",
-          "node -e \"require('http').get('http://127.0.0.1:3333', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))\""
-        ]
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3333', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))\""]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -123,7 +119,7 @@ services:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://127.0.0.1:3333}
       INTERNAL_API_URL: ${INTERNAL_API_URL:-http://api:3333}
     ports:
-      - "${ADMIN_PORT:-3001}:3001"
+      - "127.0.0.1:${ADMIN_PORT:-3001}:3001"
     depends_on:
       api:
         condition: service_started

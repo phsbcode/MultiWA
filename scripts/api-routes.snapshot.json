@@ -7,7 +7,7 @@
     "@ApiExcludeController()",
     "@ApiExcludeEndpoint()"
   ],
-  "routeCount": 221,
+  "routeCount": 230,
   "routes": [
     {
       "method": "DELETE",
@@ -487,6 +487,10 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/groups/dnt-operations/profile/:profileId"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/groups/profile/:profileId"
     },
     {
@@ -588,6 +592,10 @@
     {
       "method": "GET",
       "path": "/api/v1/messages/profile/:profileId"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/messages/profile/:profileId/resolve-senders"
     },
     {
       "method": "POST",
@@ -718,8 +726,36 @@
       "path": "/api/v1/profiles/:id/disconnect"
     },
     {
+      "method": "DELETE",
+      "path": "/api/v1/profiles/:id/dnt-operations"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/profiles/:id/dnt-operations/cancel-pairing"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/profiles/:id/dnt-operations/connect"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/profiles/:id/dnt-operations/qr"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/profiles/:id/dnt-operations/status"
+    },
+    {
       "method": "GET",
       "path": "/api/v1/profiles/:id/status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/profiles/dnt-operations"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/profiles/dnt-operations"
     },
     {
       "method": "POST",

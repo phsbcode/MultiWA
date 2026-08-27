@@ -16,9 +16,54 @@ export interface EngineConfig {
   onQR?: (qr: string) => void;
   onReady?: (phone: string, pushName: string) => void;
   onDisconnected?: (reason: string) => void;
-  onMessage?: (message: any) => void;
+  onMessage?: (message: any) => void | Promise<void>;
   onMessageAck?: (messageId: string, status: string) => void;
+  onMessageEdit?: (event: MessageEditEvent) => void | Promise<void>;
+  onMessageDelete?: (event: MessageDeleteEvent) => void | Promise<void>;
+  onMessageReaction?: (event: MessageReactionEvent) => void | Promise<void>;
+  onPhoneNumberShare?: (event: PhoneNumberShareEvent) => void | Promise<void>;
+  onMessageReceipt?: (event: MessageReceiptEvent) => void | Promise<void>;
+  onMediaUpdate?: (event: MediaUpdateEvent) => void | Promise<void>;
   onPresenceUpdate?: (presence: PresenceUpdate) => void;
+}
+
+export interface MessageEditEvent {
+  messageId: string;
+  body: string;
+  type: string;
+  editedAt?: Date;
+}
+
+export type MessageDeleteEvent =
+  | { messageIds: string[]; deletedAt: Date }
+  | { jid: string; all: true; deletedAt: Date };
+
+export interface MessageReactionEvent {
+  messageId: string;
+  reactionId: string;
+  senderJid: string;
+  emoji: string;
+  timestamp?: Date;
+  fromMe: boolean;
+}
+
+export interface PhoneNumberShareEvent {
+  lid: string;
+  jid: string;
+}
+
+export interface MessageReceiptEvent {
+  messageId: string;
+  participantJid: string;
+  deliveredAt?: Date;
+  readAt?: Date;
+  playedAt?: Date;
+}
+
+export interface MediaUpdateEvent {
+  messageId: string;
+  available: boolean;
+  error?: string;
 }
 
 export interface SendMessageOptions {
@@ -145,6 +190,9 @@ export interface IWhatsAppEngine {
   // Contacts - fetch contacts from WhatsApp
   getContacts(): Promise<ContactInfo[]>;
 
+  // Resolve provider-only participant identities when an engine has a trusted mapping.
+  resolvePhoneJids?(jids: string[]): Promise<Record<string, string>>;
+
   createGroup(name: string, participants: string[]): Promise<GroupInfo>;
   setGroupName(groupId: string, name: string): Promise<void>;
   setGroupDescription(groupId: string, description: string): Promise<void>;
@@ -156,4 +204,3 @@ export interface IWhatsAppEngine {
   getGroupInviteLink(groupId: string): Promise<string>;
   revokeGroupInviteLink(groupId: string): Promise<string>;
 }
-

@@ -5,7 +5,7 @@ import { Controller, Get, Post, Delete, Body, Param, UseGuards } from '@nestjs/c
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
 import { HooksService } from './hooks.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
-import { IsString, IsArray, IsOptional } from 'class-validator';
+import { IsString, IsArray, IsBoolean, IsInt, Max, Min, IsOptional } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 class RegisterHookDto {
@@ -26,6 +26,18 @@ class RegisterHookDto {
   @IsOptional()
   @IsString()
   secret?: string;
+
+  @ApiProperty({ description: 'Mirror the HMAC proof into the JSON body for receivers without header access', required: false })
+  @IsOptional()
+  @IsBoolean()
+  signatureInBody?: boolean;
+
+  @ApiProperty({ description: 'Delivery timeout in milliseconds', required: false, minimum: 1000, maximum: 60000 })
+  @IsOptional()
+  @IsInt()
+  @Min(1000)
+  @Max(60000)
+  timeoutMs?: number;
 }
 
 @ApiTags('Hooks')
@@ -55,10 +67,11 @@ export class HooksController {
   @Post()
   @ApiOperation({
     summary: 'Register a new webhook hook',
-    description: 'Register a URL to receive POST callbacks for specific events. Events: message.received, message.sent, profile.connected, profile.disconnected, broadcast.completed, etc. Use ["*"] for all events.',
+    description: 'Register a URL to receive POST callbacks for specific events. Events: message.received, message.edited, message.sent, profile.connected, profile.disconnected, broadcast.completed, etc. Use ["*"] for all events.',
   })
   async registerHook(@Body() dto: RegisterHookDto) {
-    const hook = await this.hooksService.registerHook(dto.url, dto.events, dto.secret);
+    const hook = await this.hooksService.registerHook(
+      dto.url, dto.events, dto.secret, dto.signatureInBody === true, dto.timeoutMs || 10000);
     return {
       success: true,
       data: {
@@ -66,6 +79,8 @@ export class HooksController {
         url: hook.url,
         events: hook.events,
         active: hook.active,
+        signatureInBody: hook.signatureInBody === true,
+        timeoutMs: hook.timeoutMs || 10000,
       },
     };
   }

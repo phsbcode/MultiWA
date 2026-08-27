@@ -32,6 +32,9 @@ interface Profile {
   updatedAt: string;
   dailyMessageLimit?: number;
   dailyMessageCount?: number;
+  settings?: {
+    dntOperationsAccess?: boolean;
+  };
   sessionData?: {
     jid?: string;
     name?: string;
@@ -53,6 +56,7 @@ export default function ProfileDetailPage() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [connectionAttempts, setConnectionAttempts] = useState(0);
+  const [savingDntAccess, setSavingDntAccess] = useState(false);
   const socketRef = useRef<Socket | null>(null);
   const accountIdRef = useRef<string | null>(null);
 
@@ -83,10 +87,8 @@ export default function ProfileDetailPage() {
 
     // Listen for QR code updates (backend sends { profileId, qrCode })
     socket.on('qr:update', (data: { profileId: string; qrCode: string }) => {
-      console.log('QR update received:', data.profileId, data.qrCode?.substring(0, 50));
       if (data.profileId === profileId && data.qrCode) {
         setQrCode(data.qrCode);
-        console.log('QR Code set!');
       }
     });
 
@@ -248,6 +250,37 @@ export default function ProfileDetailPage() {
     } finally {
       setDeleting(false);
       setShowDeleteDialog(false);
+    }
+  };
+
+  const handleDntOperationsAccess = async (allowed: boolean) => {
+    setSavingDntAccess(true);
+    try {
+      const token = localStorage.getItem('accessToken');
+      const res = await fetch(`/api/v1/profiles/${profileId}`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ dntOperationsAccess: allowed }),
+      });
+      if (!res.ok) throw new Error('Profile access update failed');
+      setProfile(current => current ? {
+        ...current,
+        settings: { ...current.settings, dntOperationsAccess: allowed },
+      } : current);
+      toast({
+        title: allowed ? 'DNT Operations access enabled' : 'DNT Operations access removed',
+        description: allowed
+          ? 'This profile can now appear in DNT Operations.'
+          : 'The WhatsApp profile remains connected and unchanged.',
+      });
+    } catch (error) {
+      console.error('Failed to update DNT Operations access:', error);
+      toast({ title: 'Access update failed', variant: 'destructive' });
+    } finally {
+      setSavingDntAccess(false);
     }
   };
 
@@ -434,6 +467,25 @@ export default function ProfileDetailPage() {
               </p>
             </div>
           </div>
+        </div>
+
+        <div className="p-6 border-t border-border">
+          <h3 className="text-sm font-medium text-foreground mb-2">Application access</h3>
+          <label className="flex items-start gap-3 rounded-xl border border-border p-4 bg-secondary/20">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4"
+              checked={profile.settings?.dntOperationsAccess === true}
+              disabled={savingDntAccess}
+              onChange={event => handleDntOperationsAccess(event.target.checked)}
+            />
+            <span>
+              <span className="block font-medium text-foreground">Allow access by DNT Operations</span>
+              <span className="block text-sm text-muted-foreground mt-1">
+                DNT Operations can list and connect this profile. Turning access off does not disconnect it.
+              </span>
+            </span>
+          </label>
         </div>
 
         {/* Actions */}

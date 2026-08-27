@@ -560,6 +560,35 @@ export default function ChatPage() {
       }
     });
 
+    // Provider-side mutations such as edits, revokes, receipts, and media retries.
+    socket.on('message:update', (data: { profileId: string; message: Message }) => {
+      if (data.profileId !== selectedProfile || !data.message) return;
+
+      const updatedMessage = data.message;
+      if (updatedMessage.conversationId !== selectedConversationRef.current?.id) {
+        loadConversations();
+        return;
+      }
+
+      setMessages(prev => {
+        const update = (timeline: Message[]) => timeline.map(message => {
+          const matchesDatabaseId = message.id === updatedMessage.id;
+          const matchesProviderId = Boolean(
+            message.messageId
+            && updatedMessage.messageId
+            && message.messageId === updatedMessage.messageId,
+          );
+          return matchesDatabaseId || matchesProviderId
+            ? { ...message, ...updatedMessage }
+            : message;
+        });
+        const updated = applyLiveTimelineUpdate(preSearchMessagesRef.current, prev, update);
+        preSearchMessagesRef.current = updated.canonical;
+        return updated.visible;
+      });
+      loadConversations();
+    });
+
     socket.on('presence:update', (data: ChatPresenceEvent) => {
       const conversationId = selectedConversationRef.current?.id;
       if (!conversationId) return;
