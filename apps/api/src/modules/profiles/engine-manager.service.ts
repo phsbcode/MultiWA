@@ -828,6 +828,22 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
               },
             });
             this.eventsGateway.emitMessageUpdate(profileId, updated);
+            const conversation = await prisma.conversation.findUnique({
+              where: { id: message.conversationId },
+              select: { id: true, jid: true, name: true, type: true },
+            });
+            this.hooksService.emit(AppEvent.MESSAGE_EDITED, {
+              profileId,
+              messageId: message.messageId || event.messageId,
+              senderJid: message.senderJid || '',
+              type: updated.type,
+              content: updated.content,
+              timestamp: event.editedAt || new Date(),
+              isGroup: conversation?.type === 'group',
+              conversationId: message.conversationId,
+              chatJid: conversation?.jid || '',
+              groupName: conversation?.name || '',
+            });
           }
         } catch (error) {
           this.logger.warn(`Failed to apply message edit: ${(error as Error).message}`);

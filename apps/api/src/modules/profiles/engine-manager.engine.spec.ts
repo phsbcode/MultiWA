@@ -24,7 +24,7 @@ vi.mock('@multiwa/database', () => ({
       update: vi.fn(),
       updateMany: vi.fn(),
     },
-    conversation: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
+    conversation: { findFirst: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
     contact: { findFirst: vi.fn(), create: vi.fn() },
     message: {
       findFirst: vi.fn(),
@@ -51,6 +51,7 @@ describe('EngineManagerService engine selection', () => {
     emitPresence: vi.fn(),
   };
   let service: EngineManagerService;
+  const hooksService = { emit: vi.fn() };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -62,7 +63,7 @@ describe('EngineManagerService engine selection', () => {
       eventsGateway as any,
       { processMessage: vi.fn() } as any,
       { createForOrg: vi.fn() } as any,
-      { emit: vi.fn() } as any,
+      hooksService as any,
       { handleIncomingMessage: vi.fn() } as any,
     );
   });
@@ -119,10 +120,19 @@ describe('EngineManagerService engine selection', () => {
     } as any);
     vi.mocked(prisma.message.findMany).mockResolvedValue([{
       id: 'database-message',
+      messageId: 'provider-message',
+      conversationId: 'group-conversation',
+      senderJid: '60123456789@s.whatsapp.net',
       type: 'text',
       content: { text: 'Original' },
       metadata: {},
     }] as any);
+    vi.mocked(prisma.conversation.findUnique).mockResolvedValue({
+      id: 'group-conversation',
+      jid: '120363000000000000@g.us',
+      name: 'TEST Group',
+      type: 'group',
+    } as any);
     vi.mocked(prisma.message.update).mockResolvedValue({
       id: 'database-message',
       messageId: 'provider-message',
@@ -146,6 +156,13 @@ describe('EngineManagerService engine selection', () => {
       }),
     }));
     expect(eventsGateway.emitMessageUpdate).toHaveBeenCalledOnce();
+    expect(hooksService.emit).toHaveBeenCalledWith('message.edited', expect.objectContaining({
+      profileId: 'profile-baileys',
+      messageId: 'provider-message',
+      isGroup: true,
+      conversationId: 'group-conversation',
+      chatJid: '120363000000000000@g.us',
+    }));
   });
 
   it('persists replayed history once without firing live-message side effects', async () => {
