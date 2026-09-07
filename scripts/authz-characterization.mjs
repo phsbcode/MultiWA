@@ -82,12 +82,21 @@ async function mutationFixture(profileId, label) {
 
 async function mutationSnapshot(conversationId) {
   return {
-    conversation: await prisma.conversation.findUnique({ where: { id: conversationId },
-      select: { id: true, profileId: true, unreadCount: true, metadata: true,
-        lastMessageAt: true } }),
+    conversation: await prisma.conversation.findUnique({ where: { id: conversationId } }),
     messages: await prisma.message.findMany({ where: { conversationId },
-      select: { id: true, status: true }, orderBy: { id: 'asc' } }),
+      orderBy: { id: 'asc' } }),
   };
+}
+
+async function requestWithoutConversationWrites({
+  method, route, credential, body, expectedStatus, label, conversationIds,
+}) {
+  const before = await Promise.all(conversationIds.map(mutationSnapshot));
+  const response = await request(method, route, credential, body);
+  assert.equal(response.status, expectedStatus, label);
+  const after = await Promise.all(conversationIds.map(mutationSnapshot));
+  assert.deepEqual(after, before, `${label} must not change either organization's records`);
+  return response;
 }
 
 function routeWithForgedSelectors(path, profileId, organizationId) {
@@ -469,45 +478,66 @@ try {
     const callerOrganizationFixture = await mutationFixture(profileA1,
       `denial-anchor-${mutation.name}`);
     const foreignPath = `/api/v1/conversations/${foreignFixture.conversation.id}${mutation.suffix}`;
-    const foreignBefore = await mutationSnapshot(foreignFixture.conversation.id);
-    const callerOrganizationBefore = await mutationSnapshot(
-      callerOrganizationFixture.conversation.id);
+    const deniedConversationIds = [
+      foreignFixture.conversation.id,
+      callerOrganizationFixture.conversation.id,
+    ];
     const denialBodies = [];
 
     for (const [credentialName, credential] of mutationCredentials) {
       const missingId = crypto.randomUUID();
-      const directForeign = await request(mutation.method, foreignPath, credential);
-      const missingConversation = await request(mutation.method,
-        `/api/v1/conversations/${missingId}${mutation.suffix}`, credential);
-      const forgedQuery = await request(mutation.method,
-        routeWithForgedSelectors(foreignPath, profileA1, jwtA.organizationId), credential);
-      const forgedBody = await request(mutation.method, foreignPath, credential,
-        { profileId: profileA1, organizationId: jwtA.organizationId });
-      for (const response of [directForeign, missingConversation, forgedQuery, forgedBody]) {
-        assert.equal(response.status, 404, `${credentialName} ${mutation.name} foreign denial`);
-      }
+      const directForeign = await requestWithoutConversationWrites({
+        method: mutation.method, route: foreignPath, credential, expectedStatus: 404,
+        label: `${credentialName} ${mutation.name} foreign denial`,
+        conversationIds: deniedConversationIds,
+      });
+      const missingConversation = await requestWithoutConversationWrites({
+        method: mutation.method,
+        route: `/api/v1/conversations/${missingId}${mutation.suffix}`,
+        credential, expectedStatus: 404,
+        label: `${credentialName} ${mutation.name} missing denial`,
+        conversationIds: deniedConversationIds,
+      });
+      const forgedQuery = await requestWithoutConversationWrites({
+        method: mutation.method,
+        route: routeWithForgedSelectors(foreignPath, profileA1, jwtA.organizationId),
+        credential, expectedStatus: 404,
+        label: `${credentialName} ${mutation.name} forged query denial`,
+        conversationIds: deniedConversationIds,
+      });
+      const forgedBody = await requestWithoutConversationWrites({
+        method: mutation.method, route: foreignPath, credential,
+        body: { profileId: profileA1, organizationId: jwtA.organizationId },
+        expectedStatus: 404,
+        label: `${credentialName} ${mutation.name} forged body denial`,
+        conversationIds: deniedConversationIds,
+      });
       assert.deepEqual(directForeign.value, missingConversation.value,
         `${credentialName} ${mutation.name} must not disclose foreign existence`);
       denialBodies.push(directForeign.value);
-      assert.deepEqual(await mutationSnapshot(foreignFixture.conversation.id), foreignBefore,
-        `${credentialName} ${mutation.name} denied requests must not write`);
-      assert.deepEqual(await mutationSnapshot(callerOrganizationFixture.conversation.id),
-        callerOrganizationBefore,
-        `${credentialName} ${mutation.name} denied requests must not write to caller records`);
+      assert.deepEqual(forgedQuery.value, directForeign.value);
+      assert.deepEqual(forgedBody.value, directForeign.value);
     }
     assert.deepEqual(denialBodies[0], denialBodies[1],
       `${mutation.name} JWT and API-key denial bodies must match`);
 
     const unauthenticatedFixture = await mutationFixture(profileA1, `unauthenticated-${mutation.name}`);
     const unauthenticatedPath = `/api/v1/conversations/${unauthenticatedFixture.conversation.id}${mutation.suffix}`;
-    const unauthenticatedBefore = await mutationSnapshot(unauthenticatedFixture.conversation.id);
-    const missingCredential = await request(mutation.method, unauthenticatedPath);
-    const invalidCredential = await request(mutation.method, unauthenticatedPath,
-      { type: 'jwt', value: 'invalid' });
-    assert.equal(missingCredential.status, 401, `${mutation.name} missing credential`);
-    assert.equal(invalidCredential.status, 401, `${mutation.name} invalid credential`);
-    assert.deepEqual(await mutationSnapshot(unauthenticatedFixture.conversation.id),
-      unauthenticatedBefore, `${mutation.name} authentication failures must not write`);
+    const authenticationDenialIds = [
+      unauthenticatedFixture.conversation.id,
+      foreignFixture.conversation.id,
+    ];
+    await requestWithoutConversationWrites({
+      method: mutation.method, route: unauthenticatedPath, expectedStatus: 401,
+      label: `${mutation.name} missing credential`,
+      conversationIds: authenticationDenialIds,
+    });
+    await requestWithoutConversationWrites({
+      method: mutation.method, route: unauthenticatedPath,
+      credential: { type: 'jwt', value: 'invalid' }, expectedStatus: 401,
+      label: `${mutation.name} invalid credential`,
+      conversationIds: authenticationDenialIds,
+    });
 
     for (const [credentialName, credential] of mutationCredentials) {
       const ownFixture = await mutationFixture(profileA2, `${credentialName}-${mutation.name}`);
