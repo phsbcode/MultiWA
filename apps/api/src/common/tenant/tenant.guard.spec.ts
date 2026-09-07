@@ -101,6 +101,18 @@ describe('TenantGuard', () => {
     expect(messageFindFirst).not.toHaveBeenCalled();
   });
 
+  it.each([[['profile-a']], [{ id: 'profile-a' }], [123]])(
+    'rejects a non-string tenant selector before ownership lookup',
+    async value => {
+      const runtimeValue = runtime([{ resource: 'profile', from: 'body', key: 'profileId' }], {
+        user: { organizationId: 'org-a' }, body: { profileId: value },
+      });
+      await expect(runtimeValue.guard.canActivate(runtimeValue.context))
+        .rejects.toThrow('Invalid profileId.');
+      expect(profileFindFirst).not.toHaveBeenCalled();
+    },
+  );
+
   it('returns the same non-disclosing result for missing and foreign resources', async () => {
     profileFindFirst.mockResolvedValue(null);
     const foreign = runtime([{ resource: 'profile', from: 'param', key: 'profileId' }], {
