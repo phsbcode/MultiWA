@@ -206,17 +206,17 @@ try {
     profileId: profileA1, contactId: detailContact.id,
     jid: `synthetic-detail-a1-${suffix}@s.whatsapp.net`, name: 'Synthetic detail A1',
     type: 'user', unreadCount: 3, metadata: { fixture: 'detail-a1' },
-    lastMessageAt: new Date('2026-09-07T04:00:00Z'),
+    lastMessageAt: new Date(-1000),
   } });
   const detailMessagesA1 = await Promise.all(Array.from({ length: 101 }, (_value, index) =>
     prisma.message.create({ data: {
       profileId: profileA1, conversationId: detailConversationA1.id,
       messageId: `provider-detail-a1-${String(index).padStart(3, '0')}-${suffix}`,
-      direction: index % 2 ? 'outgoing' : 'incoming',
-      senderJid: `synthetic-detail-a1-${suffix}@s.whatsapp.net`, type: 'text',
+      direction: 'detail-fixture',
+      senderJid: `synthetic-detail-a1-${suffix}@s.whatsapp.net`, type: 'detail-fixture',
       content: { text: `synthetic detail message ${index}` },
       status: index % 2 ? 'sent' : 'delivered', metadata: { index: index },
-      timestamp: new Date(Date.UTC(2026, 8, 7, 3, 0, index)),
+      timestamp: new Date(-101000 + index * 1000),
     } })));
   const detailConversationA2 = await prisma.conversation.create({ data: {
     profileId: profileA2, jid: `synthetic-detail-a2-${suffix}@s.whatsapp.net`,
@@ -228,8 +228,8 @@ try {
   } });
   await prisma.message.create({ data: {
     profileId: profileB, conversationId: detailConversationB.id,
-    messageId: `provider-detail-b-${suffix}`, direction: 'incoming',
-    senderJid: `synthetic-detail-b-${suffix}@s.whatsapp.net`, type: 'text',
+    messageId: `provider-detail-b-${suffix}`, direction: 'detail-fixture',
+    senderJid: `synthetic-detail-b-${suffix}@s.whatsapp.net`, type: 'detail-fixture',
     content: { text: 'synthetic foreign detail' }, status: 'delivered',
     metadata: { fixture: 'detail-b' }, timestamp: new Date('2026-09-07T03:00:00Z'),
   } });
