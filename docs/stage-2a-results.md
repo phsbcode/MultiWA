@@ -65,6 +65,13 @@ The current candidate requires organization ownership for conversation detail an
 validates `messageLimit` as a canonical decimal integer from 1 through 100 with a
 default of 50. See `stage-2b2b-results.md` for candidate acceptance evidence.
 
+### Batch 2B.2C: message reads and local deletion
+
+The current candidate protects conversation message reads, single-message detail
+and local deletion. Message ownership verifies organization and conversation-parent
+consistency; conversation cursors are scoped to the authorized conversation. See
+`stage-2b2c-results.md` for candidate acceptance evidence.
+
 ### Remaining Batch 2B.2 work
 
 Protect send, schedule, message-delete and participant operations by the supplied

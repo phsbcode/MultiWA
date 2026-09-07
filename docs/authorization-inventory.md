@@ -8,16 +8,16 @@ the gap. Later Stage 2 work must reduce those entries through behavior and tests
 
 ## Coverage
 
-Reviewed baseline: `00512fa1a9c4be68b8e11f7afac71c0782f923ac`.
+Reviewed baseline: `40e20046fb630b615e190f160424574f61178379`.
 
 - 232 controller routes found in source.
 - 231 routes in the public API snapshot.
 - One Swagger-excluded controller route: `GET /api/v1`.
 - Four supplementary entrypoints: static media, API docs and two `/ws` gateways.
 - 236 total inventory entries.
-- 71 entries have explicit protected evidence.
+- 74 entries have explicit protected evidence.
 - Eight are intentional public endpoints.
-- 153 have confirmed ownership/role gaps in source.
+- 150 have confirmed ownership/role gaps in source.
 - Four need an ownership decision, including three legacy hook routes.
 
 The high gap count is deliberate. A class-level authentication guard does not
@@ -44,6 +44,7 @@ side effect, proposed permission, source evidence and known DNT consumers.
 | Profile status and DNT Operations profile routes | Organization-scoped; DNT flag requires exact boolean `true`. | Preserve response shapes and exact flag behavior. |
 | Profile message list | Organization ownership enforced for JWT and API keys. | Preserve scan filters, ordering and response fields. |
 | Profile media batch | Organization ownership enforced; every requested ID must belong to the selected profile or the request returns 404 without partial data. | Keep the 50-ID bound and request-order response behavior. |
+| Conversation message reads, message detail and local deletion | Organization ownership enforced; message routes also require the message profile to match its conversation profile. | Preserve response shapes, chronological cursor behavior and local-only deletion. |
 | Sender resolution | Organization ownership enforced and may persist recovered identity metadata. | Stage 2C must decide whether the DNT key receives a dedicated capability or `messages:write`. |
 | Conversation list/message list/detail | Organization ownership enforced for profile list, conversation messages and detail. Detail accepts a strict 1–100 message limit and defaults to 50. | Preserve chronological behavior and existing response fields. |
 | Conversation mutations | Read, archive, unarchive, mute, pin, clear-messages and delete verify conversation ownership before service execution. | Preserve current success bodies and service semantics. |

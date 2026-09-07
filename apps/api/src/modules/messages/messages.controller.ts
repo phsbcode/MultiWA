@@ -24,6 +24,7 @@ import {
 import { AuditService, AuditAction } from '../audit/audit.service';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
+import { ConversationMessagesLimitPipe } from './dto/conversation-messages-limit.pipe';
 
 @ApiTags('Messages')
 @Controller('messages')
@@ -211,19 +212,24 @@ export class MessagesController {
 
   // Get messages by conversation
   @Get('conversation/:conversationId')
+  @RequireTenant({ resource: 'conversation', from: 'param', key: 'conversationId' })
   @ApiOperation({ summary: 'Get messages by conversation' })
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'before', required: false, description: 'Get messages before this ID' })
   async findByConversation(
     @Param('conversationId') conversationId: string,
-    @Query('limit') limit?: number,
+    @Query('limit', new ConversationMessagesLimitPipe()) limit?: unknown,
     @Query('before') before?: string,
   ) {
-    return this.service.findByConversation(conversationId, { limit, before });
+    return this.service.findByConversation(conversationId, {
+      limit: limit as number | undefined,
+      before,
+    });
   }
 
   // Get single message
   @Get(':id')
+  @RequireTenant({ resource: 'message', from: 'param', key: 'id' })
   @ApiOperation({ summary: 'Get message by ID' })
   async findOne(@Param('id') id: string) {
     return this.service.findOne(id);
@@ -231,6 +237,7 @@ export class MessagesController {
 
   // Delete message (from local database)
   @Delete(':id')
+  @RequireTenant({ resource: 'message', from: 'param', key: 'id' })
   @ApiOperation({ summary: 'Delete message from database' })
   async delete(@Param('id') id: string) {
     return this.service.delete(id);

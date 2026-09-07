@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { profileFindFirst, conversationFindFirst } = vi.hoisted(() => ({
+const { profileFindFirst, conversationFindFirst, messageFindFirst } = vi.hoisted(() => ({
   profileFindFirst: vi.fn(),
   conversationFindFirst: vi.fn(),
+  messageFindFirst: vi.fn(),
 }));
 vi.mock('@multiwa/database', () => ({ prisma: {
   profile: { findFirst: profileFindFirst },
   conversation: { findFirst: conversationFindFirst },
+  message: { findFirst: messageFindFirst },
 } }));
 
 import { TenantGuard } from './tenant.guard';
@@ -25,6 +27,7 @@ describe('TenantGuard', () => {
   beforeEach(() => {
     profileFindFirst.mockReset();
     conversationFindFirst.mockReset();
+    messageFindFirst.mockReset();
   });
   it('leaves routes without ownership metadata unchanged', async () => {
     const value = runtime([], { user: {} });
@@ -63,6 +66,39 @@ describe('TenantGuard', () => {
       where: { id: 'conversation-a', profile: { workspace: { organizationId: 'org-a' } } },
       select: { id: true },
     });
+  });
+
+  it('checks message ownership and conversation parent consistency', async () => {
+    messageFindFirst.mockResolvedValueOnce({ id: 'message-a', profileId: 'profile-a',
+      conversation: { profileId: 'profile-a' } });
+    const value = runtime([{ resource: 'message', from: 'param', key: 'id' }], {
+      user: { organizationId: 'org-a' }, params: { id: 'message-a' },
+    });
+    await expect(value.guard.canActivate(value.context)).resolves.toBe(true);
+    expect(messageFindFirst).toHaveBeenCalledWith({
+      where: { id: 'message-a', profile: { workspace: { organizationId: 'org-a' } } },
+      select: { id: true, profileId: true,
+        conversation: { select: { profileId: true } } },
+    });
+  });
+
+  it('rejects a message whose stored profile disagrees with its conversation', async () => {
+    messageFindFirst.mockResolvedValueOnce({ id: 'message-a', profileId: 'profile-a',
+      conversation: { profileId: 'profile-b' } });
+    const value = runtime([{ resource: 'message', from: 'param', key: 'id' }], {
+      user: { organizationId: 'org-a' }, params: { id: 'message-a' },
+    });
+    await expect(value.guard.canActivate(value.context)).rejects.toThrow('Resource not found.');
+  });
+
+  it('fails closed for an unsupported tenant resource', async () => {
+    const value = runtime([{ resource: 'unsupported', from: 'param', key: 'id' }], {
+      user: { organizationId: 'org-a' }, params: { id: 'resource-a' },
+    });
+    await expect(value.guard.canActivate(value.context)).rejects.toThrow('Resource not found.');
+    expect(profileFindFirst).not.toHaveBeenCalled();
+    expect(conversationFindFirst).not.toHaveBeenCalled();
+    expect(messageFindFirst).not.toHaveBeenCalled();
   });
 
   it('returns the same non-disclosing result for missing and foreign resources', async () => {

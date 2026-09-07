@@ -259,7 +259,7 @@ function selectors(routePath, header, dtoFields) {
     result.push({ location: 'path', name: match[1], required: true,
       namespace: selectorNamespace(match[1], '', routePath), parent: '' });
   }
-  for (const match of header.matchAll(/@(Query|Body)\(\s*(?:['"`]([^'"`]*)['"`])?\s*\)\s*([A-Za-z_$][\w$]*)?(\?)?\s*(?::\s*([^,\n\)]+))?/g)) {
+  for (const match of header.matchAll(/@(Query|Body)\(\s*(?:['"`]([^'"`]*)['"`])?\s*(?:,\s*new\s+[A-Za-z_$][\w$]*\s*\([^)]*\))?\s*\)\s*([A-Za-z_$][\w$]*)?(\?)?\s*(?::\s*([^,\n\)]+))?/g)) {
     const location = match[1].toLowerCase();
     const name = match[2] || match[3] || location;
     if (result.some(value => value.location === location && value.name === name)) continue;
@@ -493,7 +493,7 @@ export function validateInventory(root, inventory, discovered = discoverControll
     if (!Array.isArray(entry.selectors)) errors.push(`${entry.key}: selectors missing`);
     if (!Array.isArray(entry.tenantChecks)) errors.push(`${entry.key}: tenantChecks missing`);
     (entry.tenantChecks || []).forEach(check => {
-      if (!['profile', 'conversation'].includes(check.resource) ||
+      if (!['profile', 'conversation', 'message'].includes(check.resource) ||
           !['param', 'query', 'body'].includes(check.from) || !check.key ||
           typeof check.optional !== 'boolean') {
         errors.push(`${entry.key}: malformed tenant check`);

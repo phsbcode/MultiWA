@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reviewedBaseline": "00512fa1a9c4be68b8e11f7afac71c0782f923ac",
+  "reviewedBaseline": "d3bc7258c8e261886814d5689a1fbc11b241b6f9",
   "upstreamReference": "ff51e79dd83da6fd5dee71765dfaf0ea71ae0d24",
   "publicSnapshotRouteCount": 231,
   "excludedControllerRoutes": [
@@ -671,10 +671,17 @@
         "JwtOrApiKeyGuard",
         "TenantGuard"
       ],
-      "tenantChecks": [],
-      "implementedAccess": "authenticated-user",
+      "tenantChecks": [
+        {
+          "resource": "message",
+          "from": "param",
+          "key": "id",
+          "optional": false
+        }
+      ],
+      "implementedAccess": "organization",
       "targetAccess": "organization",
-      "status": "confirmed-gap",
+      "status": "protected",
       "selectors": [
         {
           "location": "path",
@@ -687,7 +694,7 @@
       "ownershipEvidence": [
         "apps/api/src/modules/messages/messages.controller.ts#delete",
         "apps/api/src/modules/messages/messages.service.ts#delete",
-        "Authentication guard is present; no handler-level ownership evidence was found."
+        "Route declares a tenant resource selector enforced after authentication."
       ],
       "sideEffect": "mutation",
       "proposedPermission": "messages:write",
@@ -3147,10 +3154,17 @@
         "JwtOrApiKeyGuard",
         "TenantGuard"
       ],
-      "tenantChecks": [],
-      "implementedAccess": "authenticated-user",
+      "tenantChecks": [
+        {
+          "resource": "message",
+          "from": "param",
+          "key": "id",
+          "optional": false
+        }
+      ],
+      "implementedAccess": "organization",
       "targetAccess": "organization",
-      "status": "confirmed-gap",
+      "status": "protected",
       "selectors": [
         {
           "location": "path",
@@ -3163,7 +3177,7 @@
       "ownershipEvidence": [
         "apps/api/src/modules/messages/messages.controller.ts#findOne",
         "apps/api/src/modules/messages/messages.service.ts#findOne",
-        "Authentication guard is present; no handler-level ownership evidence was found."
+        "Route declares a tenant resource selector enforced after authentication."
       ],
       "sideEffect": "read",
       "proposedPermission": "messages:read",
@@ -3186,10 +3200,17 @@
         "JwtOrApiKeyGuard",
         "TenantGuard"
       ],
-      "tenantChecks": [],
-      "implementedAccess": "authenticated-user",
+      "tenantChecks": [
+        {
+          "resource": "conversation",
+          "from": "param",
+          "key": "conversationId",
+          "optional": false
+        }
+      ],
+      "implementedAccess": "organization",
       "targetAccess": "organization",
-      "status": "confirmed-gap",
+      "status": "protected",
       "selectors": [
         {
           "location": "path",
@@ -3202,7 +3223,7 @@
           "location": "query",
           "name": "limit",
           "required": false,
-          "namespace": "dto:number",
+          "namespace": "dto:unknown",
           "parent": ""
         },
         {
@@ -3216,7 +3237,7 @@
       "ownershipEvidence": [
         "apps/api/src/modules/messages/messages.controller.ts#findByConversation",
         "apps/api/src/modules/messages/messages.service.ts#findByConversation",
-        "Authentication guard is present; no handler-level ownership evidence was found."
+        "Route declares a tenant resource selector enforced after authentication."
       ],
       "sideEffect": "read",
       "proposedPermission": "messages:read",

@@ -54,9 +54,20 @@ export class TenantGuard implements CanActivate {
         select,
       }));
     }
-    return Boolean(await prisma.conversation.findFirst({
-      where: { id, profile: { workspace: { organizationId } } },
-      select,
-    }));
+    if (resource === 'conversation') {
+      return Boolean(await prisma.conversation.findFirst({
+        where: { id, profile: { workspace: { organizationId } } },
+        select,
+      }));
+    }
+    if (resource === 'message') {
+      const message = await prisma.message.findFirst({
+        where: { id, profile: { workspace: { organizationId } } },
+        select: { id: true, profileId: true,
+          conversation: { select: { profileId: true } } },
+      });
+      return Boolean(message && message.profileId === message.conversation.profileId);
+    }
+    return false;
   }
 }

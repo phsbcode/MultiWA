@@ -2,7 +2,7 @@ import { SetMetadata } from '@nestjs/common';
 
 export const TENANT_CHECKS = 'multiwa:tenant-checks';
 
-export type TenantResource = 'profile' | 'conversation';
+export type TenantResource = 'profile' | 'conversation' | 'message';
 export type TenantSelectorLocation = 'param' | 'query' | 'body';
 
 export interface TenantCheck {
