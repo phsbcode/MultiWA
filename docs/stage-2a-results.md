@@ -16,7 +16,7 @@ Stage 2A changed no runtime authorization. It records current behavior for Stage
 | Organization A reads B profile messages | 200 | Confirmed gap |
 | Organization A retrieves B profile media by B message ID | 201 | Confirmed gap |
 | Organization A lists B profile conversations | 200 | Confirmed gap |
-| Organization A reads B conversation detail | 200 | Confirmed gap |
+| Organization A reads B conversation detail | 200 | Pre-enforcement confirmed gap; closed by Batch 2B.2B |
 | A1 profile with A2 conversation/message context | 404 | Child containment protected |
 | DNT flag boolean true/string true/boolean false | 200/404/404 | Exact boolean protected |
 | Unauthenticated synthetic static media | 200 | Confirmed gap |
@@ -30,9 +30,9 @@ The current schema requires `User.organizationId`, so a persisted user principal
 without an organization could not be constructed. Stage 2 guards must still reject
 missing runtime organization context before building ORM filters.
 
-Conversation detail without `messageLimit` returned 500 because Prisma received an
-invalid `take`. The characterization supplies `messageLimit=50`. Track that defect
-separately; it is not an authorization result.
+The Stage 2A image returned 500 for conversation detail without `messageLimit`.
+Batch 2B.2B now supplies a validated numeric default of 50 before calling the
+service and retains this historical observation as pre-enforcement evidence.
 
 ## Stage 2B enforcement backlog
 
@@ -58,6 +58,12 @@ ordering and bounds unchanged.
 Completed in candidate `e9fad0c`: read, archive, unarchive, mute, pin,
 clear-messages and delete now require organization ownership of the selected
 conversation. See `stage-2b2a-results.md` for isolated acceptance evidence.
+
+### Batch 2B.2B: conversation detail
+
+The current candidate requires organization ownership for conversation detail and
+validates `messageLimit` as a canonical decimal integer from 1 through 100 with a
+default of 50. See `stage-2b2b-results.md` for candidate acceptance evidence.
 
 ### Remaining Batch 2B.2 work
 
