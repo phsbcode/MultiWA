@@ -9,8 +9,8 @@ Strict metadata parsing commit: `7648656ed8ca4a8e009498075a89fc4d8861fefd`.
 Candidate image: `multiwa-api:stage2b1-review-ebe8a71`, image ID
 `sha256:a332d5526e08bae77337ba7112fde5409fb8f2153fef3de9f954f04918afdda1`.
 
-Live runs the accepted Batch 2B.1 image above. It is the rollback baseline for
-Batch 2B.2A.
+The accepted Batch 2B.1 image above is retained as the rollback baseline for the
+live Batch 2B.2A release.
 
 Batch 2B.1 adds organization ownership checks to the six Payment Monitor read
 routes for messages, media, sender resolution, conversations and groups. The

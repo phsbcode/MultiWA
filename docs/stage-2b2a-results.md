@@ -11,9 +11,10 @@ Routed service-spy and per-request snapshot correction:
 Candidate image: `multiwa-api:stage2b2a-494c0d8`, image ID
 `sha256:faf91b6f31717dc0c8c73d11168c95623ec7e93e9eab58c19653e15240183bc4`.
 
-Live remains on the accepted Batch 2B.1 image
-`sha256:a332d5526e08bae77337ba7112fde5409fb8f2153fef3de9f954f04918afdda1`.
-Batch 2B.2A has not been merged or deployed.
+PR 7 merged to `main` as `a92a76c60649cd622e171991f97b34d8bad63f29`.
+Live runs the candidate image above from 7 September 2026. The accepted Batch
+2B.1 image `sha256:a332d5526e08bae77337ba7112fde5409fb8f2153fef3de9f954f04918afdda1`
+is retained as the rollback image.
 
 ## Change
 
@@ -85,6 +86,11 @@ as business writes.
 - Public-boundary, API-contract, inventory and repository release checks: passed.
 - Isolated real HTTP characterization: passed, including all preserved Batch 2B.1
   assertions and the five known later-stage gaps.
+- Live API health: passed. Payment Monitor reported MultiWA connected, automatic
+  intake healthy and 45 group options available.
+- Read-only Payment Monitor adapter: summary, queue, detail, evidence metadata and
+  a protected PDF evidence file returned 200. Missing credentials returned 401,
+  and the read-only key received 403 on a write route.
 
 The first full API run failed before collecting two suites because the local Prisma
 client had not been generated after dependencies were restored. Generating the
@@ -109,16 +115,19 @@ Archive and unarchive still replace metadata. Mute and pin remain non-idempotent
 toggles and must not be retried automatically. Conversation detail, static media,
 hooks, API-key permission enforcement and inactive-user keys remain explicit gaps.
 
-No live rollback is needed before release because the candidate is not deployed.
-For a later authorized release, restore the accepted Batch 2B.1 image ID above and
-verify API health plus Payment Monitor queue, drawer and preview reads. Do not run
+Rollback by tagging the retained Batch 2B.1 image as `multiwa-api:latest`, then
+recreate only the Compose `api` service with `--no-deps --no-build`. Verify API,
+PostgreSQL and Redis health plus Payment Monitor reads after recovery. Do not run
 live conversation mutations as acceptance tests.
 
-## Astra review handoff
+Headless browser acceptance could not establish the Google staff web-app session
+because neither retained OAuth profile supplied the required Google cookies. The
+same finance-reviewer identity successfully loaded the queue, detail and protected
+preview through the read-only Apps Script adapter. No dashboard or Apps Script code
+changed in this release.
 
-Review code commits `e9fad0c`, `494c0d8` and `9c709c2`, plus the documentation follow-up. Check the seven exact
-controller decorators, controller service-spy tests, all 13 inventory mutation
-tests and the 88-request conversation mutation matrix in
-`scripts/authz-characterization.mjs`. Re-run the isolated command above. Confirm
-that all Batch 2B.1 assertions and five known gaps remain unchanged. Do not merge
-or deploy during review.
+## Astra review result
+
+Astra found two acceptance-test gaps. Commits `9c709c2` and `2416750` closed them
+with routed controller service-spy tests and complete two-organization snapshots
+around every denied request. The independent rerun found no release-blocking issue.
