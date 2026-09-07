@@ -264,6 +264,10 @@ export class MockAdapter implements IWhatsAppEngine {
     ];
   }
 
+  async resolvePhoneJids(jids: string[]): Promise<Record<string, string>> {
+    return Object.fromEntries(jids.map(jid => [jid, '6281234567890@s.whatsapp.net']));
+  }
+
   async createGroup(name: string, participants: string[]): Promise<import('../types').GroupInfo> {
     console.log(`[Mock] Creating group: ${name} with ${participants.length} participants`);
     return { id: `mock-group-${Date.now()}@g.us`, name, participants: participants.map(p => ({ id: p, isAdmin: false })) };
@@ -307,4 +311,3 @@ export class MockAdapter implements IWhatsAppEngine {
     return `https://chat.whatsapp.com/mock-new-invite-${Date.now()}`;
   }
 }
-

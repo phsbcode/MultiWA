@@ -18,6 +18,19 @@ describe('resolveProfileEngineType', () => {
   it('rejects unsupported persisted engine values by falling back safely', () => {
     expect(resolveProfileEngineType({ engine: 'unknown-engine' })).toBe('whatsapp-web-js');
   });
+
+  it('allows the inert mock adapter only in the test runtime', () => {
+    const original = process.env.NODE_ENV;
+    try {
+      process.env.NODE_ENV = 'test';
+      expect(resolveProfileEngineType({ engine: 'mock' })).toBe('mock');
+      process.env.NODE_ENV = 'production';
+      expect(resolveProfileEngineType({ engine: 'mock' })).toBe('whatsapp-web-js');
+    } finally {
+      if (original === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = original;
+    }
+  });
 });
 
 describe('DNT Operations profile access', () => {

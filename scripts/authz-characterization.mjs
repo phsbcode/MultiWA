@@ -69,7 +69,7 @@ try {
   const profileB = await profile(jwtB, workspaceB, 'B');
 
   await prisma.profile.update({ where: { id: profileA1 }, data: {
-    settings: { engine: 'baileys', dntOperationsAccess: true },
+    settings: { engine: 'mock', dntOperationsAccess: true },
   } });
   await prisma.profile.update({ where: { id: profileA2 }, data: {
     settings: { engine: 'baileys', dntOperationsAccess: 'true' },
@@ -87,6 +87,25 @@ try {
     senderJid: `synthetic-a1-${suffix}@s.whatsapp.net`, type: 'image',
     content: { url: 'data:image/png;base64,iVBORw0KGgo=', filename: 'synthetic-a1.png' },
     timestamp: new Date(0),
+  } });
+  const messageA1Outgoing = await prisma.message.create({ data: {
+    profileId: profileA1, conversationId: conversationA1.id,
+    messageId: `provider-a1-outgoing-${suffix}`, direction: 'outgoing',
+    senderJid: `synthetic-a1-${suffix}@s.whatsapp.net`, type: 'text',
+    content: { text: 'synthetic outgoing' }, timestamp: new Date('2026-09-07T01:01:00Z'),
+  } });
+  const messageA1Incoming = await prisma.message.create({ data: {
+    profileId: profileA1, conversationId: conversationA1.id,
+    messageId: `provider-a1-incoming-${suffix}`, direction: 'incoming',
+    senderJid: `synthetic-a1-${suffix}@s.whatsapp.net`, type: 'text',
+    content: { text: 'synthetic incoming' }, timestamp: new Date('2026-09-07T01:02:00Z'),
+  } });
+  const messageA1Latest = await prisma.message.create({ data: {
+    profileId: profileA1, conversationId: conversationA1.id,
+    messageId: `provider-a1-latest-${suffix}`, direction: 'incoming',
+    senderJid: `synthetic-a1-${suffix}@s.whatsapp.net`, type: 'image',
+    content: { url: 'data:image/png;base64,aGVsbG8=', filename: 'synthetic-latest.png' },
+    timestamp: new Date('2026-09-07T01:03:00Z'),
   } });
   const conversationA2 = await prisma.conversation.create({ data: {
     profileId: profileA2, jid: `synthetic-a2-${suffix}@s.whatsapp.net`, type: 'user',
@@ -107,6 +126,10 @@ try {
     content: { url: 'data:image/png;base64,iVBORw0KGgo=', filename: 'synthetic.png' },
     timestamp: new Date(0),
   } });
+
+  const inertProvider = await request('POST', `/api/v1/profiles/${profileA1}/connect`, jwtA, {});
+  assert.equal(inertProvider.status, 201);
+  await new Promise(resolve => setTimeout(resolve, 2100));
 
   const missing = await request('GET', '/api/v1/profiles');
   const invalid = await request('GET', '/api/v1/profiles', { type: 'jwt', value: 'invalid' });
@@ -136,12 +159,29 @@ try {
   assert.equal(typeof ownMessage.mediaFingerprint, 'string');
   report.observed.sameOrganizationMessages = ownMessages.status;
 
+  const filteredMessages = await request('GET',
+    `/api/v1/messages/profile/${profileA1}?since=${encodeURIComponent('2026-09-07T01:01:30Z')}` +
+    '&type=text&direction=incoming&limit=1&offset=0&includeMedia=false', jwtA);
+  assert.equal(filteredMessages.status, 200);
+  assert.deepEqual(filteredMessages.value.map(item => item.id), [messageA1Incoming.id]);
+  const offsetMessages = await request('GET',
+    `/api/v1/messages/profile/${profileA1}?type=text&limit=1&offset=1&includeMedia=false`, jwtA);
+  assert.equal(offsetMessages.status, 200);
+  assert.deepEqual(offsetMessages.value.map(item => item.id), [messageA1Outgoing.id]);
+  report.observed.messageFilteringAndPagination = 200;
+
   const ownMedia = await request('POST', `/api/v1/messages/profile/${profileA1}/media`,
-    jwtA, { ids: [messageA1.id] });
+    jwtA, { ids: [messageA1Latest.id, messageA1.id] });
   assert.equal(ownMedia.status, 201);
-  assert.equal(ownMedia.value[0].id, messageA1.id);
-  assert.equal(ownMedia.value[0].content.filename, 'synthetic-a1.png');
+  assert.deepEqual(ownMedia.value.map(item => item.id), [messageA1Latest.id, messageA1.id]);
+  assert.deepEqual(ownMedia.value.map(item => item.content.filename),
+    ['synthetic-latest.png', 'synthetic-a1.png']);
   report.observed.sameOrganizationMedia = ownMedia.status;
+
+  const overLimitMedia = await request('POST', `/api/v1/messages/profile/${profileA1}/media`,
+    jwtA, { ids: Array.from({ length: 51 }, () => messageA1.id) });
+  assert.equal(overLimitMedia.status, 400);
+  report.observed.mediaLimit = overLimitMedia.status;
 
   const foreignMessages = await request('GET',
     `/api/v1/messages/profile/${profileB}?includeMedia=false`, jwtA);
@@ -161,6 +201,12 @@ try {
   report.observed.mixedProfileMedia = mixedMedia.status;
   report.protected.push('Media batches reject mixed-profile IDs without returning a partial result.');
 
+  const sameOrganizationMixedMedia = await request('POST',
+    `/api/v1/messages/profile/${profileA1}/media`, jwtA,
+    { ids: [messageA1.id, messageA2.id] });
+  assert.equal(sameOrganizationMixedMedia.status, 404);
+  report.observed.sameOrganizationMixedMedia = sameOrganizationMixedMedia.status;
+
   const foreignResolution = await request('POST',
     `/api/v1/messages/profile/${profileB}/resolve-senders`, jwtA,
     { jids: ['900000000000001@lid'] });
@@ -174,11 +220,32 @@ try {
   report.observed.foreignConversationList = foreignConversations.status;
   report.protected.push('Conversation listing rejects a foreign organization profile ID.');
 
+  const ownConversations = await request('GET',
+    `/api/v1/conversations?profileId=${profileA1}&limit=10&offset=0`, jwtA);
+  assert.equal(ownConversations.status, 200);
+  assert.ok(ownConversations.value.conversations.some(item => item.id === conversationA1.id));
+  report.observed.sameOrganizationConversationList = ownConversations.status;
+
   const ownConversationMessages = await request('GET',
-    `/api/v1/conversations/${conversationA1.id}/messages?limit=20`, jwtA);
+    `/api/v1/conversations/${conversationA1.id}/messages?limit=2`, jwtA);
   assert.equal(ownConversationMessages.status, 200);
-  assert.ok(ownConversationMessages.value.messages.some(item => item.id === messageA1.id));
+  assert.deepEqual(ownConversationMessages.value.messages.map(item => item.id),
+    [messageA1Incoming.id, messageA1Latest.id]);
+  assert.equal(ownConversationMessages.value.hasMore, true);
   report.observed.sameOrganizationConversationMessages = ownConversationMessages.status;
+
+  const validCursor = await request('GET',
+    `/api/v1/conversations/${conversationA1.id}/messages?limit=2&before=${messageA1Incoming.id}`, jwtA);
+  assert.equal(validCursor.status, 200);
+  assert.deepEqual(validCursor.value.messages.map(item => item.id),
+    [messageA1.id, messageA1Outgoing.id]);
+  const sameOrganizationCursor = await request('GET',
+    `/api/v1/conversations/${conversationA1.id}/messages?limit=2&before=${messageA2.id}`, jwtA);
+  const foreignOrganizationCursor = await request('GET',
+    `/api/v1/conversations/${conversationA1.id}/messages?limit=2&before=${messageB.id}`, jwtA);
+  assert.equal(sameOrganizationCursor.status, 404);
+  assert.equal(foreignOrganizationCursor.status, 404);
+  report.observed.conversationCursorContainment = 404;
 
   const foreignConversationMessages = await request('GET',
     `/api/v1/conversations/${conversationB.id}/messages?limit=20`, jwtA);
@@ -190,6 +257,20 @@ try {
   assert.equal(foreignGroups.status, 404);
   report.observed.foreignGroupList = foreignGroups.status;
   report.protected.push('Group listing rejects a foreign organization profile before provider access.');
+
+  const ownGroups = await request('GET', `/api/v1/groups/profile/${profileA1}`, jwtA);
+  assert.equal(ownGroups.status, 200);
+  assert.deepEqual(ownGroups.value.map(item => item.id),
+    ['mock-group-1@g.us', 'mock-group-2@g.us']);
+  report.observed.sameOrganizationGroups = ownGroups.status;
+
+  const ownResolution = await request('POST',
+    `/api/v1/messages/profile/${profileA1}/resolve-senders`, jwtA,
+    { jids: ['900000000000001@lid'] });
+  assert.equal(ownResolution.status, 201);
+  assert.deepEqual(ownResolution.value,
+    { phones: { '900000000000001@lid': '6281234567890' } });
+  report.observed.sameOrganizationSenderResolution = ownResolution.status;
 
   const foreignConversation = await request('GET',
     `/api/v1/conversations/${conversationB.id}?messageLimit=50`, jwtA);
@@ -229,6 +310,27 @@ try {
     assert.equal(response.status, 200);
     report.observed[name + 'KeyRead'] = response.status;
   }
+  const apiKeyMessages = await request('GET',
+    `/api/v1/messages/profile/${profileA1}?type=text&limit=1&offset=0`, readKey);
+  const apiKeyMedia = await request('POST', `/api/v1/messages/profile/${profileA1}/media`,
+    readKey, { ids: [messageA1Latest.id, messageA1.id] });
+  const apiKeyResolution = await request('POST',
+    `/api/v1/messages/profile/${profileA1}/resolve-senders`, readKey,
+    { jids: ['900000000000001@lid'] });
+  const apiKeyConversations = await request('GET',
+    `/api/v1/conversations?profileId=${profileA1}&limit=10&offset=0`, readKey);
+  const apiKeyConversationMessages = await request('GET',
+    `/api/v1/conversations/${conversationA1.id}/messages?limit=2`, readKey);
+  const apiKeyGroups = await request('GET', `/api/v1/groups/profile/${profileA1}`, readKey);
+  assert.deepEqual([apiKeyMessages.status, apiKeyMedia.status, apiKeyResolution.status,
+    apiKeyConversations.status, apiKeyConversationMessages.status, apiKeyGroups.status],
+  [200, 201, 201, 200, 200, 200]);
+  assert.deepEqual(apiKeyMedia.value.map(item => item.id), [messageA1Latest.id, messageA1.id]);
+  assert.deepEqual(apiKeyResolution.value,
+    { phones: { '900000000000001@lid': '6281234567890' } });
+  assert.deepEqual(apiKeyGroups.value.map(item => item.id),
+    ['mock-group-1@g.us', 'mock-group-2@g.us']);
+  report.observed.apiKeyOwnPaymentReads = 200;
   for (const route of [
     `/api/v1/messages/profile/${profileB}?includeMedia=false`,
     `/api/v1/conversations?profileId=${profileB}`,
@@ -238,9 +340,21 @@ try {
     const response = await request('GET', route, readKey);
     assert.equal(response.status, 404);
   }
-  const apiKeyMedia = await request('POST', `/api/v1/messages/profile/${profileB}/media`,
+  const apiKeyForeignMedia = await request('POST', `/api/v1/messages/profile/${profileB}/media`,
     readKey, { ids: [messageB.id] });
-  assert.equal(apiKeyMedia.status, 404);
+  assert.equal(apiKeyForeignMedia.status, 404);
+  const apiKeyForeignResolution = await request('POST',
+    `/api/v1/messages/profile/${profileB}/resolve-senders`, readKey,
+    { jids: ['900000000000001@lid'] });
+  assert.equal(apiKeyForeignResolution.status, 404);
+  const apiKeyCrossOrganizationMixedMedia = await request('POST',
+    `/api/v1/messages/profile/${profileA1}/media`, readKey,
+    { ids: [messageA1.id, messageB.id] });
+  const apiKeySameOrganizationMixedMedia = await request('POST',
+    `/api/v1/messages/profile/${profileA1}/media`, readKey,
+    { ids: [messageA1.id, messageA2.id] });
+  assert.equal(apiKeyCrossOrganizationMixedMedia.status, 404);
+  assert.equal(apiKeySameOrganizationMixedMedia.status, 404);
   report.observed.apiKeyForeignPaymentReads = 404;
   report.protected.push('API-key Payment Monitor reads enforce the same organization boundaries as JWT reads.');
   report.decisions.push('Empty and wildcard permission sets currently retain full authenticated-key behavior.');

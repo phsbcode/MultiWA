@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { discoverControllerRoutes, validateInventory } from './authz-inventory-lib.mjs';
 
 function fixture(t) {
@@ -86,4 +87,74 @@ test('detects a missing supplementary entrypoint', t => {
     handler: 'synthetic' }];
   const errors = validateInventory(value.root, value.inventory, value.routes, expected);
   assert.ok(errors.some(error => error.includes('supplementary entrypoint missing')));
+});
+
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const checkedInventory = JSON.parse(fs.readFileSync(
+  path.join(repositoryRoot, 'scripts/authz-routes.inventory.json'), 'utf8',
+));
+const protectedTenantRoutes = [
+  'GET /api/v1/messages/profile/:profileId',
+  'POST /api/v1/messages/profile/:profileId/media',
+  'POST /api/v1/messages/profile/:profileId/resolve-senders',
+  'GET /api/v1/conversations',
+  'GET /api/v1/conversations/:id/messages',
+  'GET /api/v1/groups/profile/:profileId',
+];
+
+function mutateSource(file, mutation) {
+  const originalRead = fs.readFileSync;
+  fs.readFileSync = function (candidate, ...args) {
+    const value = originalRead.call(this, candidate, ...args);
+    return path.resolve(String(candidate)) === path.resolve(file) && typeof value === 'string'
+      ? mutation(value) : value;
+  };
+  try {
+    return validateInventory(repositoryRoot, checkedInventory);
+  } finally {
+    fs.readFileSync = originalRead;
+  }
+}
+
+function changeTenantDecorator(source, handler, mutation) {
+  const handlerIndex = source.indexOf(`async ${handler}(`);
+  assert.ok(handlerIndex > 0, `handler ${handler} must exist`);
+  const start = source.lastIndexOf('@RequireTenant(', handlerIndex);
+  const end = source.indexOf('\n', start);
+  assert.ok(start > 0 && end > start, `tenant decorator for ${handler} must exist`);
+  return source.slice(0, start) + mutation(source.slice(start, end)) + source.slice(end);
+}
+
+test('detects removal of every Batch 2B.1 ownership decorator', () => {
+  protectedTenantRoutes.forEach(key => {
+    const route = checkedInventory.routes.find(value => value.key === key);
+    assert.ok(route, key);
+    const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
+      changeTenantDecorator(source, route.handler, () => ''));
+    assert.ok(errors.includes(`route tenant-check drift: ${key}`), key);
+  });
+});
+
+test('detects weakened tenant resource, location, key and optionality', () => {
+  const key = 'GET /api/v1/messages/profile/:profileId';
+  const route = checkedInventory.routes.find(value => value.key === key);
+  const changes = [
+    decorator => decorator.replace("resource: 'profile'", "resource: 'conversation'"),
+    decorator => decorator.replace("from: 'param'", "from: 'query'"),
+    decorator => decorator.replace("key: 'profileId'", "key: 'otherId'"),
+    decorator => decorator.replace(/\s*}\)$/, ', optional: true })'),
+  ];
+  changes.forEach(change => {
+    const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
+      changeTenantDecorator(source, route.handler, change));
+    assert.ok(errors.includes(`route tenant-check drift: ${key}`));
+  });
+});
+
+test('detects removal of TenantGuard from a protected controller', () => {
+  const key = 'GET /api/v1/messages/profile/:profileId';
+  const route = checkedInventory.routes.find(value => value.key === key);
+  const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
+    source.replace('@UseGuards(JwtOrApiKeyGuard, TenantGuard)', '@UseGuards(JwtOrApiKeyGuard)'));
+  assert.ok(errors.includes(`route guard drift: ${key}`));
 });

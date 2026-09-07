@@ -8,6 +8,9 @@ export function resolveProfileEngineType(settings: unknown): EngineType {
     if (engine === 'baileys' || engine === 'whatsapp-web-js') {
       return engine;
     }
+    if (engine === 'mock' && process.env.NODE_ENV === 'test') {
+      return engine;
+    }
   }
 
   return DEFAULT_PROFILE_ENGINE;

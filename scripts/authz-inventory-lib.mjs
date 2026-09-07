@@ -48,6 +48,20 @@ function guardNames(text) {
   return [...result];
 }
 
+function tenantChecks(text) {
+  const result = [];
+  for (const call of text.matchAll(/@RequireTenant\(([\s\S]*?)\)/g)) {
+    for (const object of call[1].matchAll(/\{([^}]+)\}/g)) {
+      const field = name => object[1].match(new RegExp(
+        `\\b${name}\\s*:\\s*['\"]([^'\"]+)['\"]`,
+      ))?.[1] || '';
+      result.push({ resource: field('resource'), from: field('from'), key: field('key'),
+        optional: /\boptional\s*:\s*true\b/.test(object[1]) });
+    }
+  }
+  return result;
+}
+
 function methodDetails(source, routeEnd, nextRouteIndex) {
   const segment = source.slice(routeEnd, nextRouteIndex);
   const method = segment.match(/\n\s*(?:public\s+|private\s+|protected\s+)?(?:async\s+)?([A-Za-z_$][\w$]*)\s*\(/);
@@ -270,6 +284,7 @@ export function discoverControllerRoutes(root) {
       const decoratorStart = Math.max(classStart, previousMethodEnd < 0 ? classStart : previousMethodEnd + 4);
       const decoratorText = source.slice(decoratorStart, details.methodIndex);
       const methodGuards = guardNames(decoratorText);
+      const ownershipChecks = tenantChecks(decoratorText);
       const route = { method: match[1].toUpperCase(),
         path: joinRoute(controllerMatch[1] || '', match[2] || ''),
         source: relative, controller, handler: details.handler,
@@ -281,6 +296,7 @@ export function discoverControllerRoutes(root) {
       const service = serviceReference(root, file, source, details.block);
       routes.push({ key: `${route.method} ${route.path}`, ...route,
         principals: classification.principals, guards: classification.guards,
+        tenantChecks: ownershipChecks,
         implementedAccess: classification.implementedAccess,
         targetAccess: classification.targetAccess, status: classification.status,
         selectors: selectors(route.path, details.header, dtoFields),
@@ -300,25 +316,25 @@ export function supplementaryEntrypoints() {
   return [
     { key: 'STATIC /uploads/media/*', source: 'apps/api/src/main.ts', handler: '@fastify/static',
       principals: ['unauthenticated'], implementedAccess: 'public', targetAccess: 'organization',
-      status: 'decision-required', selectors: [{ location: 'path', name: '*', required: true,
+      status: 'decision-required', tenantChecks: [], selectors: [{ location: 'path', name: '*', required: true,
         namespace: 'storage-relative-path', parent: '' }], ownershipEvidence: [
         'apps/api/src/main.ts#fastify-static', 'Static media prefix has no controller guard.' ],
       sideEffect: 'read-media', proposedPermission: 'messages:read', clients: [], notes: '' },
     { key: 'GET /api/docs', source: 'apps/api/src/main.ts', handler: 'SwaggerModule.setup',
       principals: ['unauthenticated'], implementedAccess: 'public', targetAccess: 'public',
-      status: 'intentional-public', selectors: [], ownershipEvidence: [
+      status: 'intentional-public', tenantChecks: [], selectors: [], ownershipEvidence: [
         'apps/api/src/main.ts#SwaggerModule.setup', 'Public API documentation endpoint.' ],
       sideEffect: 'read', proposedPermission: 'public', clients: [], notes: '' },
     { key: 'SOCKET /ws (EventsGateway)', source: 'apps/api/src/modules/events/events.gateway.ts',
       handler: 'EventsGateway', principals: ['jwt', 'api-key'], implementedAccess: 'organization',
-      targetAccess: 'organization', status: 'protected', selectors: [{ location: 'message',
+      targetAccess: 'organization', status: 'protected', tenantChecks: [], selectors: [{ location: 'message',
         name: 'profileId', required: true, namespace: 'profile-id', parent: '' }],
       ownershipEvidence: ['apps/api/src/modules/events/events.gateway.ts#authenticate',
         'EventsGateway.handleJoin verifies profile workspace organization before joining a room.'],
       sideEffect: 'subscription', proposedPermission: 'profiles:read', clients: [], notes: '' },
     { key: 'SOCKET /ws (RealtimeGateway)', source: 'apps/api/src/modules/websocket/realtime.gateway.ts',
       handler: 'RealtimeGateway', principals: ['api-key'], implementedAccess: 'authenticated-user',
-      targetAccess: 'organization', status: 'confirmed-gap', selectors: [{ location: 'message',
+      targetAccess: 'organization', status: 'confirmed-gap', tenantChecks: [], selectors: [{ location: 'message',
         name: 'profileId', required: true, namespace: 'profile-id', parent: '' }],
       ownershipEvidence: ['apps/api/src/modules/websocket/realtime.gateway.ts#handleSubscribe',
         'Subscription stores the supplied profile ID without an organization ownership query.'],
@@ -354,6 +370,14 @@ export function validateInventory(root, inventory, discovered = discoverControll
       errors.push(`${entry.key}: ownership evidence missing`);
     }
     if (!Array.isArray(entry.selectors)) errors.push(`${entry.key}: selectors missing`);
+    if (!Array.isArray(entry.tenantChecks)) errors.push(`${entry.key}: tenantChecks missing`);
+    (entry.tenantChecks || []).forEach(check => {
+      if (!['profile', 'conversation'].includes(check.resource) ||
+          !['param', 'query', 'body'].includes(check.from) || !check.key ||
+          typeof check.optional !== 'boolean') {
+        errors.push(`${entry.key}: malformed tenant check`);
+      }
+    });
     (entry.selectors || []).forEach(selector => {
       if (!selector.location || !selector.name || !selector.namespace ||
           typeof selector.required !== 'boolean' || typeof selector.parent !== 'string') {
@@ -387,6 +411,8 @@ export function validateInventory(root, inventory, discovered = discoverControll
       errors.push(`route selector drift: ${key}`);
     } else if (JSON.stringify(actual.get(key).guards) !== JSON.stringify(route.guards)) {
       errors.push(`route guard drift: ${key}`);
+    } else if (JSON.stringify(actual.get(key).tenantChecks) !== JSON.stringify(route.tenantChecks)) {
+      errors.push(`route tenant-check drift: ${key}`);
     }
   }
   for (const key of actual.keys()) if (!expected.has(key)) errors.push(`stale inventory route: ${key}`);
