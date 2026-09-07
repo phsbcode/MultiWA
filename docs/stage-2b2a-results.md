@@ -5,6 +5,9 @@ Candidate code commit: `e9fad0cb6082c9316440eb22115e0be04d84259e`.
 Cross-organization snapshot correction:
 `494c0d818b20f23f012189d17a8fa3883b1affcd`.
 
+Routed service-spy and per-request snapshot correction:
+`9c709c2b184ce042d76231b37cbac2e47d40726c`.
+
 Candidate image: `multiwa-api:stage2b2a-494c0d8`, image ID
 `sha256:faf91b6f31717dc0c8c73d11168c95623ec7e93e9eab58c19653e15240183bc4`.
 
@@ -51,7 +54,9 @@ SHA-256 digest as the checked-in schema.
 
 The mutation matrix made 88 HTTP requests: 70 denied requests and 18 successful
 explicit actions. Fresh fixtures prevented an earlier delete from turning later
-foreign tests into missing-record tests.
+foreign tests into missing-record tests. Every denied request compares complete
+conversation and message records from both organizations immediately before and
+after that request.
 
 Successful behavior was checked in the database:
 
@@ -68,8 +73,10 @@ as business writes.
 ## Verification
 
 - Syntax check for `scripts/authz-characterization.mjs`: passed.
-- Focused controller, guard and service suites: 35 passed.
-- Full API suite: 128 passed and two opt-in integration tests skipped.
+- Focused controller, guard and service suites: 42 passed. The routed controller
+  cases prove each denied request avoids its service method and each authorized
+  request invokes it once.
+- Full API suite: 135 passed and two opt-in integration tests skipped.
 - API typecheck and production build: passed.
 - Authorization inventory mutation suite: 13 passed.
 - Authorization inventory: 232 controller routes and four supplementary entries;
@@ -109,7 +116,7 @@ live conversation mutations as acceptance tests.
 
 ## Astra review handoff
 
-Review code commits `e9fad0c` and `494c0d8`, plus the documentation follow-up. Check the seven exact
+Review code commits `e9fad0c`, `494c0d8` and `9c709c2`, plus the documentation follow-up. Check the seven exact
 controller decorators, controller service-spy tests, all 13 inventory mutation
 tests and the 88-request conversation mutation matrix in
 `scripts/authz-characterization.mjs`. Re-run the isolated command above. Confirm
