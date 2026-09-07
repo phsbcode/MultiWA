@@ -2579,10 +2579,17 @@
         "JwtOrApiKeyGuard",
         "TenantGuard"
       ],
-      "tenantChecks": [],
-      "implementedAccess": "authenticated-user",
+      "tenantChecks": [
+        {
+          "resource": "conversation",
+          "from": "param",
+          "key": "id",
+          "optional": false
+        }
+      ],
+      "implementedAccess": "organization",
       "targetAccess": "organization",
-      "status": "confirmed-gap",
+      "status": "protected",
       "selectors": [
         {
           "location": "path",
@@ -2590,19 +2597,12 @@
           "required": true,
           "namespace": "route-resource-id",
           "parent": ""
-        },
-        {
-          "location": "query",
-          "name": "messageLimit",
-          "required": false,
-          "namespace": "provider-or-database-message-id",
-          "parent": ""
         }
       ],
       "ownershipEvidence": [
         "apps/api/src/modules/conversations/conversations.controller.ts#findOne",
         "apps/api/src/modules/conversations/conversations.service.ts#findOne",
-        "Authentication guard is present; no handler-level ownership evidence was found."
+        "Route declares a tenant resource selector enforced after authentication."
       ],
       "sideEffect": "read",
       "proposedPermission": "messages:read",

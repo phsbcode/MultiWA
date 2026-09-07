@@ -15,9 +15,9 @@ Reviewed baseline: `e9fad0cb6082c9316440eb22115e0be04d84259e`.
 - One Swagger-excluded controller route: `GET /api/v1`.
 - Four supplementary entrypoints: static media, API docs and two `/ws` gateways.
 - 236 total inventory entries.
-- 70 entries have explicit protected evidence.
+- 71 entries have explicit protected evidence.
 - Eight are intentional public endpoints.
-- 154 have confirmed ownership/role gaps in source.
+- 153 have confirmed ownership/role gaps in source.
 - Four need an ownership decision, including three legacy hook routes.
 
 The high gap count is deliberate. A class-level authentication guard does not
@@ -45,8 +45,8 @@ side effect, proposed permission, source evidence and known DNT consumers.
 | Profile message list | Organization ownership enforced for JWT and API keys. | Preserve scan filters, ordering and response fields. |
 | Profile media batch | Organization ownership enforced; every requested ID must belong to the selected profile or the request returns 404 without partial data. | Keep the 50-ID bound and request-order response behavior. |
 | Sender resolution | Organization ownership enforced and may persist recovered identity metadata. | Stage 2C must decide whether the DNT key receives a dedicated capability or `messages:write`. |
-| Conversation list/message list | Organization ownership enforced for profile list and conversation messages. | Preserve chronological behavior; detail and other routes remain in later batches. |
-| Conversation mutations | Read, archive, unarchive, mute, pin, clear-messages and delete verify conversation ownership before service execution. | Preserve current success bodies and service semantics; conversation detail remains a later gap. |
+| Conversation list/message list/detail | Organization ownership enforced for profile list, conversation messages and detail. Detail accepts a strict 1–100 message limit and defaults to 50. | Preserve chronological behavior and existing response fields. |
+| Conversation mutations | Read, archive, unarchive, mute, pin, clear-messages and delete verify conversation ownership before service execution. | Preserve current success bodies and service semantics. |
 | Conversation search/context | Current controller verifies profile organization; service verifies child containment. | Retain both checks and add guard-level regression coverage. |
 | Group list | Ordinary and DNT Operations routes enforce organization ownership; the DNT route retains its exact flag check. | Preserve provider response shape and exact DNT flag behavior. |
 | Legacy hooks | Authenticated global registry with no owner/profile field. | Complete the explicit hook ownership migration in Stage 2D. |

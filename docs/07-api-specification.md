@@ -212,7 +212,7 @@ For the same restricted integration, `GET /groups/dnt-operations/profile/:profil
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/conversations` | List conversations |
-| `GET` | `/conversations/:id` | Get conversation |
+| `GET` | `/conversations/:id` | Get conversation; optional `messageLimit` is 1–100 and defaults to 50 |
 | `GET` | `/conversations/:id/messages` | List messages in conversation |
 | `GET` | `/conversations/:id/messages/search` | Search full message history |
 | `GET` | `/conversations/:id/messages/:messageId/context` | Get chronological context around a message |
@@ -228,6 +228,11 @@ The seven conversation mutation routes verify that `:id` belongs to the
 authenticated caller's organization before calling the conversation service. JWT
 and API-key callers may mutate conversations under another profile in their own
 organization. Missing and foreign IDs both return a non-disclosing 404.
+
+Conversation detail applies the same organization check before validating
+`messageLimit`. It accepts only canonical decimal integers from 1 through 100.
+The response remains the conversation object with its contact and newest messages
+returned in chronological order.
 
 ### Contacts (`/contacts`)
 

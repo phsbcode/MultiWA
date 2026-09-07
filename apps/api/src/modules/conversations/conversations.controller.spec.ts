@@ -21,6 +21,7 @@ import {
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
 import { Reflector } from "@nestjs/core";
+import { ValidationPipe } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { ConversationsController } from "./conversations.controller";
 import { ConversationsService } from "./conversations.service";
@@ -30,6 +31,11 @@ import {
   MessageContextQueryDto,
   SearchMessagesQueryDto,
 } from "./dto/message-history-query.dto";
+import {
+  ConversationDetailQueryDto,
+  ConversationDetailQueryPipe,
+  conversationDetailLimit,
+} from "./dto/conversation-detail-query.dto";
 import { TenantGuard } from "../../common/tenant/tenant.guard";
 import { TENANT_CHECKS } from "../../common/tenant/require-tenant.decorator";
 import { JwtOrApiKeyGuard } from "../auth/guards/jwt-auth.guard";
@@ -148,16 +154,61 @@ describe("ConversationsController message history authorization", () => {
       ).toEqual([{ resource: "conversation", from: "param", key: "id" }]);
     },
   );
+
+  it("declares conversation ownership for detail", () => {
+    expect(
+      Reflect.getMetadata(
+        TENANT_CHECKS,
+        ConversationsController.prototype.findOne,
+      ),
+    ).toEqual([{ resource: "conversation", from: "param", key: "id" }]);
+  });
+
+  it.each([
+    [undefined, 50],
+    ["1", 1],
+    ["100", 100],
+  ])("normalizes detail message limit %s", (value, expected) => {
+    const query = new ConversationDetailQueryPipe().transform(
+      value === undefined ? {} : { messageLimit: value },
+    );
+    expect(conversationDetailLimit(query)).toBe(expected);
+  });
+
+  it.each([
+    "",
+    " ",
+    "0",
+    "-1",
+    "1.5",
+    "word",
+    "Infinity",
+    "101",
+    "0x10",
+    "1e2",
+  ])("rejects noncanonical detail message limit %s", (value) => {
+    expect(() =>
+      new ConversationDetailQueryPipe().transform({ messageLimit: value }),
+    ).toThrow("messageLimit must be a decimal integer from 1 through 100.");
+  });
+
+  it("rejects repeated detail message limits", () => {
+    expect(() =>
+      new ConversationDetailQueryPipe().transform({
+        messageLimit: ["1", "2"],
+      }),
+    ).toThrow("messageLimit must be a decimal integer from 1 through 100.");
+  });
 });
 
 describe("ConversationsController routed mutation authorization", () => {
   let app: NestFastifyApplication;
-  const routedService = Object.fromEntries(
-    mutationRoutes.map(({ handler }) => [handler, vi.fn()]),
-  ) as Record<
-    (typeof mutationRoutes)[number]["handler"],
-    ReturnType<typeof vi.fn>
-  >;
+  const routedService = {
+    ...Object.fromEntries(
+      mutationRoutes.map(({ handler }) => [handler, vi.fn()]),
+    ),
+    findOne: vi.fn(),
+  } as Record<string, ReturnType<typeof vi.fn>>;
 
   beforeAll(async () => {
     const module = await Test.createTestingModule({
@@ -184,6 +235,12 @@ describe("ConversationsController routed mutation authorization", () => {
       new FastifyAdapter(),
     );
     app.setGlobalPrefix("api/v1");
+    app.useGlobalPipes(
+      new ValidationPipe({
+        transform: true,
+        transformOptions: { enableImplicitConversion: true },
+      }),
+    );
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
   });
@@ -240,6 +297,76 @@ describe("ConversationsController routed mutation authorization", () => {
       expect(response.json()).toEqual(expectedResponse);
       expect(routedService[handler]).toHaveBeenCalledOnce();
       expect(routedService[handler]).toHaveBeenCalledWith("conversation-a");
+    },
+  );
+
+  it("does not invoke detail service when routed ownership fails", async () => {
+    vi.mocked(prisma.conversation.findFirst).mockResolvedValueOnce(null);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/conversations/conversation-b?messageLimit=invalid",
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({
+      statusCode: 404,
+      message: "Resource not found.",
+    });
+    expect(routedService.findOne).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["", 50],
+    ["?messageLimit=2", 2],
+  ])(
+    "invokes detail service with normalized limit for %s",
+    async (query, expectedLimit) => {
+      vi.mocked(prisma.conversation.findFirst).mockResolvedValueOnce({
+        id: "conversation-a",
+      } as any);
+      routedService.findOne.mockResolvedValueOnce({ id: "conversation-a" });
+
+      const response = await app.inject({
+        method: "GET",
+        url: `/api/v1/conversations/conversation-a${query}`,
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(routedService.findOne).toHaveBeenCalledOnce();
+      expect(routedService.findOne).toHaveBeenCalledWith(
+        "conversation-a",
+        expectedLimit,
+      );
+    },
+  );
+
+  it.each([
+    "",
+    "%20",
+    "0",
+    "-1",
+    "1.5",
+    "word",
+    "Infinity",
+    "101",
+    "0x10",
+    "1e2",
+    "1&messageLimit=2",
+  ])(
+    "rejects routed detail limit %s before service execution",
+    async (value) => {
+      vi.mocked(prisma.conversation.findFirst).mockResolvedValueOnce({
+        id: "conversation-a",
+      } as any);
+
+      const response = await app.inject({
+        method: "GET",
+        url: `/api/v1/conversations/conversation-a?messageLimit=${value}`,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(routedService.findOne).not.toHaveBeenCalled();
     },
   );
 });

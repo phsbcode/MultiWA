@@ -88,6 +88,18 @@ async function mutationSnapshot(conversationId) {
   };
 }
 
+async function expectedConversationDetail(conversationId, messageLimit = 50) {
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    include: {
+      messages: { take: messageLimit, orderBy: { timestamp: 'desc' } },
+      contact: true,
+    },
+  });
+  conversation.messages.reverse();
+  return JSON.parse(JSON.stringify(conversation));
+}
+
 async function requestWithoutConversationWrites({
   method, route, credential, body, expectedStatus, label, conversationIds,
 }) {
@@ -184,6 +196,42 @@ try {
     senderJid: `synthetic-b-${suffix}@s.whatsapp.net`, type: 'image',
     content: { url: 'data:image/png;base64,iVBORw0KGgo=', filename: 'synthetic.png' },
     timestamp: new Date(0),
+  } });
+
+  const detailContact = await prisma.contact.create({ data: {
+    profileId: profileA1, phone: `6011000${suffix}`, name: 'Synthetic detail contact',
+    whatsappName: 'Synthetic detail contact', metadata: { fixture: 'detail' },
+  } });
+  const detailConversationA1 = await prisma.conversation.create({ data: {
+    profileId: profileA1, contactId: detailContact.id,
+    jid: `synthetic-detail-a1-${suffix}@s.whatsapp.net`, name: 'Synthetic detail A1',
+    type: 'user', unreadCount: 3, metadata: { fixture: 'detail-a1' },
+    lastMessageAt: new Date('2026-09-07T04:00:00Z'),
+  } });
+  const detailMessagesA1 = await Promise.all(Array.from({ length: 101 }, (_value, index) =>
+    prisma.message.create({ data: {
+      profileId: profileA1, conversationId: detailConversationA1.id,
+      messageId: `provider-detail-a1-${String(index).padStart(3, '0')}-${suffix}`,
+      direction: index % 2 ? 'outgoing' : 'incoming',
+      senderJid: `synthetic-detail-a1-${suffix}@s.whatsapp.net`, type: 'text',
+      content: { text: `synthetic detail message ${index}` },
+      status: index % 2 ? 'sent' : 'delivered', metadata: { index: index },
+      timestamp: new Date(Date.UTC(2026, 8, 7, 3, 0, index)),
+    } })));
+  const detailConversationA2 = await prisma.conversation.create({ data: {
+    profileId: profileA2, jid: `synthetic-detail-a2-${suffix}@s.whatsapp.net`,
+    name: 'Synthetic empty detail A2', type: 'user', metadata: { fixture: 'detail-a2' },
+  } });
+  const detailConversationB = await prisma.conversation.create({ data: {
+    profileId: profileB, jid: `synthetic-detail-b-${suffix}@s.whatsapp.net`,
+    name: 'Synthetic detail B', type: 'user', metadata: { fixture: 'detail-b' },
+  } });
+  await prisma.message.create({ data: {
+    profileId: profileB, conversationId: detailConversationB.id,
+    messageId: `provider-detail-b-${suffix}`, direction: 'incoming',
+    senderJid: `synthetic-detail-b-${suffix}@s.whatsapp.net`, type: 'text',
+    content: { text: 'synthetic foreign detail' }, status: 'delivered',
+    metadata: { fixture: 'detail-b' }, timestamp: new Date('2026-09-07T03:00:00Z'),
   } });
 
   const inertProvider = await request('POST', `/api/v1/profiles/${profileA1}/connect`, jwtA, {});
@@ -374,13 +422,6 @@ try {
     { phones: { '900000000000001@lid': '6281234567890' } });
   report.observed.sameOrganizationSenderResolution = ownResolution.status;
 
-  const foreignConversation = await request('GET',
-    `/api/v1/conversations/${conversationB.id}?messageLimit=50`, jwtA);
-  assert.equal(foreignConversation.status, 200);
-  report.observed.foreignConversationDetail = foreignConversation.status;
-  report.knownGaps.push('Conversation detail accepts a foreign organization conversation ID.');
-  report.decisions.push('Conversation detail without messageLimit currently fails Prisma validation; track separately from authorization enforcement.');
-
   const mismatchedContext = await request('GET',
     `/api/v1/conversations/${conversationA2.id}/messages/${messageA2.id}/context?profileId=${profileA1}`,
     jwtA);
@@ -460,6 +501,106 @@ try {
   report.observed.apiKeyForeignPaymentReads = 404;
   report.protected.push('API-key Payment Monitor reads enforce the same organization boundaries as JWT reads.');
   report.decisions.push('Empty and wildcard permission sets currently retain full authenticated-key behavior.');
+
+  const detailCredentials = [['jwt', jwtA], ['apiKey', readKey]];
+  const detailSnapshotIds = [detailConversationA1.id, detailConversationB.id];
+  const detailLimits = [[null, 50], ['1', 1], ['2', 2], ['100', 100]];
+  const invalidDetailLimits = ['', '%20', '0', '-1', '1.5', 'word', 'Infinity',
+    '101', '0x10', '1e2', '1&messageLimit=2'];
+  const detailDenialBodies = [];
+
+  for (const [credentialName, credential] of detailCredentials) {
+    for (const [queryLimit, expectedLimit] of detailLimits) {
+      const suffix = queryLimit === null ? '' : `?messageLimit=${queryLimit}`;
+      const response = await requestWithoutConversationWrites({
+        method: 'GET', route: `/api/v1/conversations/${detailConversationA1.id}${suffix}`,
+        credential, expectedStatus: 200,
+        label: `${credentialName} owned detail limit ${expectedLimit}`,
+        conversationIds: detailSnapshotIds,
+      });
+      assert.deepEqual(response.value,
+        await expectedConversationDetail(detailConversationA1.id, expectedLimit));
+      assert.deepEqual(response.value.messages.map(message => message.id),
+        detailMessagesA1.slice(-expectedLimit).map(message => message.id));
+    }
+
+    const emptyDetail = await requestWithoutConversationWrites({
+      method: 'GET', route: `/api/v1/conversations/${detailConversationA2.id}`,
+      credential, expectedStatus: 200, label: `${credentialName} empty A2 detail`,
+      conversationIds: [detailConversationA2.id, detailConversationB.id],
+    });
+    assert.deepEqual(emptyDetail.value,
+      await expectedConversationDetail(detailConversationA2.id, 50));
+    assert.equal(emptyDetail.value.contact, null);
+    assert.deepEqual(emptyDetail.value.messages, []);
+
+    for (const invalidLimit of invalidDetailLimits) {
+      await requestWithoutConversationWrites({
+        method: 'GET',
+        route: `/api/v1/conversations/${detailConversationA1.id}?messageLimit=${invalidLimit}`,
+        credential, expectedStatus: 400,
+        label: `${credentialName} invalid detail limit ${invalidLimit}`,
+        conversationIds: detailSnapshotIds,
+      });
+    }
+
+    const missingId = crypto.randomUUID();
+    const foreignDetail = await requestWithoutConversationWrites({
+      method: 'GET', route: `/api/v1/conversations/${detailConversationB.id}`,
+      credential, expectedStatus: 404, label: `${credentialName} foreign detail`,
+      conversationIds: detailSnapshotIds,
+    });
+    const missingDetail = await requestWithoutConversationWrites({
+      method: 'GET', route: `/api/v1/conversations/${missingId}`,
+      credential, expectedStatus: 404, label: `${credentialName} missing detail`,
+      conversationIds: detailSnapshotIds,
+    });
+    const invalidForeignDetail = await requestWithoutConversationWrites({
+      method: 'GET',
+      route: `/api/v1/conversations/${detailConversationB.id}?messageLimit=invalid`,
+      credential, expectedStatus: 404,
+      label: `${credentialName} invalid foreign detail`,
+      conversationIds: detailSnapshotIds,
+    });
+    const invalidMissingDetail = await requestWithoutConversationWrites({
+      method: 'GET', route: `/api/v1/conversations/${missingId}?messageLimit=invalid`,
+      credential, expectedStatus: 404,
+      label: `${credentialName} invalid missing detail`,
+      conversationIds: detailSnapshotIds,
+    });
+    const forgedDetail = await requestWithoutConversationWrites({
+      method: 'GET',
+      route: routeWithForgedSelectors(`/api/v1/conversations/${detailConversationB.id}`,
+        profileA1, jwtA.organizationId),
+      credential, expectedStatus: 404, label: `${credentialName} forged detail selectors`,
+      conversationIds: detailSnapshotIds,
+    });
+    assert.deepEqual(foreignDetail.value, missingDetail.value);
+    assert.deepEqual(invalidForeignDetail.value, foreignDetail.value);
+    assert.deepEqual(invalidMissingDetail.value, foreignDetail.value);
+    assert.deepEqual(forgedDetail.value, foreignDetail.value);
+    detailDenialBodies.push(foreignDetail.value);
+  }
+  assert.deepEqual(detailDenialBodies[0], detailDenialBodies[1]);
+
+  for (const [label, credential] of [
+    ['missing credential', null],
+    ['invalid JWT', { type: 'jwt', value: 'invalid' }],
+    ['invalid API key', { type: 'api-key', value: 'invalid' }],
+  ]) {
+    await requestWithoutConversationWrites({
+      method: 'GET', route: `/api/v1/conversations/${detailConversationA1.id}`,
+      credential, expectedStatus: 401, label: `detail ${label}`,
+      conversationIds: detailSnapshotIds,
+    });
+  }
+  report.observed.conversationDetail = {
+    jwtOwn: 200, apiKeyOwn: 200, defaultLimit: 50, maximumLimit: 100,
+    invalidLimit: 400, foreign: 404, missing: 404, forgedSelectors: 404,
+    unauthenticated: 401, deniedBusinessWrites: 0, providerCalls: 0,
+  };
+  report.protected.push('Conversation detail enforces organization ownership before strict message-limit validation.');
+  report.decisions.push('Conversation detail accepts only canonical decimal limits from 1 through 100 and defaults to 50.');
 
   const mutationCases = [
     { name: 'read', method: 'PUT', suffix: '/read' },
@@ -622,7 +763,7 @@ try {
   report.decisions.push('Profiles without a workspace are unreachable through organization-scoped profile lookup.');
   report.decisions.push('A missing principal organization cannot be constructed under the current required User.organizationId schema.');
 
-  assert.equal(report.knownGaps.length, process.env.AUTHZ_STATIC_FIXTURE === '1' ? 5 : 4);
+  assert.equal(report.knownGaps.length, process.env.AUTHZ_STATIC_FIXTURE === '1' ? 4 : 3);
   console.log(JSON.stringify(report, null, 2));
 } finally {
   if (organizations.length) {

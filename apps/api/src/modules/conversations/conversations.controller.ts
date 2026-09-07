@@ -7,6 +7,11 @@ import { ConversationsService } from './conversations.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { prisma } from '@multiwa/database';
 import { MessageContextQueryDto, SearchMessagesQueryDto } from './dto/message-history-query.dto';
+import {
+  ConversationDetailQueryDto,
+  ConversationDetailQueryPipe,
+  conversationDetailLimit,
+} from './dto/conversation-detail-query.dto';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 
@@ -43,13 +48,14 @@ export class ConversationsController {
   }
 
   @Get(':id')
+  @RequireTenant({ resource: 'conversation', from: 'param', key: 'id' })
   @ApiOperation({ summary: 'Get conversation with messages' })
   @ApiQuery({ name: 'messageLimit', required: false })
   async findOne(
     @Param('id') id: string,
-    @Query('messageLimit') messageLimit?: number,
+    @Query(ConversationDetailQueryPipe) query: ConversationDetailQueryDto,
   ) {
-    return this.service.findOne(id, messageLimit);
+    return this.service.findOne(id, conversationDetailLimit(query));
   }
 
   @Put(':id/read')

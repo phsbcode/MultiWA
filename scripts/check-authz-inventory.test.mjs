@@ -110,7 +110,12 @@ const conversationMutationRoutes = [
   'DELETE /api/v1/conversations/:id/messages',
   'DELETE /api/v1/conversations/:id',
 ];
-const protectedTenantRoutes = [...batch2b1Routes, ...conversationMutationRoutes];
+const conversationDetailRoutes = ['GET /api/v1/conversations/:id'];
+const protectedTenantRoutes = [
+  ...batch2b1Routes,
+  ...conversationMutationRoutes,
+  ...conversationDetailRoutes,
+];
 
 function mutateSource(file, mutation) {
   const originalRead = fs.readFileSync;
@@ -177,8 +182,8 @@ test('rejects ambiguous tenant metadata syntax on every enforced route', () => {
   });
 });
 
-test('detects weakened tenant selectors on every conversation mutation route', () => {
-  conversationMutationRoutes.forEach(key => {
+test('detects weakened tenant selectors on enforced conversation routes', () => {
+  [...conversationMutationRoutes, ...conversationDetailRoutes].forEach(key => {
     const route = checkedInventory.routes.find(value => value.key === key);
     const changes = [
       decorator => decorator.replace("resource: 'conversation'", "resource: 'profile'"),
@@ -211,8 +216,8 @@ test('detects removal of TenantGuard from a protected controller', () => {
   assert.ok(errors.includes(`route guard drift: ${key}`));
 });
 
-test('detects TenantGuard removal or commenting for every conversation mutation', () => {
-  conversationMutationRoutes.forEach(key => {
+test('detects TenantGuard removal or commenting for enforced conversation routes', () => {
+  [...conversationMutationRoutes, ...conversationDetailRoutes].forEach(key => {
     const route = checkedInventory.routes.find(value => value.key === key);
     for (const replacement of [
       '// @UseGuards(JwtOrApiKeyGuard, TenantGuard)',
