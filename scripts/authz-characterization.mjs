@@ -118,6 +118,57 @@ async function requestWithoutConversationWrites({
   return response;
 }
 
+async function organizationBusinessSnapshot(organizationIds) {
+  const result = [];
+  for (const organizationId of organizationIds) {
+    const profiles = await prisma.profile.findMany({
+      where: { workspace: { organizationId } }, orderBy: { id: 'asc' },
+    });
+    const profileIds = profiles.map(profile => profile.id);
+    result.push({
+      organizationId,
+      profiles,
+      conversations: await prisma.conversation.findMany({
+        where: { profileId: { in: profileIds } }, orderBy: { id: 'asc' },
+      }),
+      messages: await prisma.message.findMany({
+        where: { profileId: { in: profileIds } }, orderBy: { id: 'asc' },
+      }),
+      scheduledMessages: await prisma.scheduledMessage.findMany({
+        where: { profileId: { in: profileIds } }, orderBy: { id: 'asc' },
+      }),
+      auditLogs: await prisma.auditLog.findMany({
+        where: { organizationId }, orderBy: { id: 'asc' },
+      }),
+    });
+  }
+  return JSON.parse(JSON.stringify(result));
+}
+
+async function requestWithoutBusinessWrites({
+  method, route, credential, body, expectedStatus, label, organizationIds,
+}) {
+  const before = await organizationBusinessSnapshot(organizationIds);
+  const response = await request(method, route, credential, body);
+  assert.equal(response.status, expectedStatus, `${label}: ${JSON.stringify(response.value)}`);
+  const after = await organizationBusinessSnapshot(organizationIds);
+  if (JSON.stringify(after) !== JSON.stringify(before)) {
+    throw new Error(`${label} changed an organization's business records.`);
+  }
+  return response;
+}
+
+async function waitForStableBusinessState(organizationIds) {
+  let before = await organizationBusinessSnapshot(organizationIds);
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const after = await organizationBusinessSnapshot(organizationIds);
+    if (JSON.stringify(after) === JSON.stringify(before)) return;
+    before = after;
+  }
+  throw new Error('Synthetic provider acknowledgements did not settle.');
+}
+
 function routeWithForgedSelectors(path, profileId, organizationId) {
   const separator = path.includes('?') ? '&' : '?';
   return `${path}${separator}profileId=${encodeURIComponent(profileId)}` +
@@ -1020,6 +1071,154 @@ try {
   report.observed.conversationMutations = mutationResults;
   report.protected.push('Seven conversation mutations enforce organization ownership for JWT and API-key callers.');
   report.decisions.push('API-key lastUsedAt bookkeeping is excluded from denied business-write counts.');
+
+  const directSendCases = [
+    { name: 'image', body: { base64: 'aGVsbG8=', caption: 'Synthetic image' } },
+    { name: 'video', body: { base64: 'aGVsbG8=', caption: 'Synthetic video' } },
+    { name: 'audio', body: { base64: 'aGVsbG8=', ptt: true } },
+    { name: 'document', body: { base64: 'aGVsbG8=', filename: 'synthetic.pdf' } },
+    { name: 'location', body: { latitude: 3.1, longitude: 101.7,
+      name: 'Synthetic location' } },
+    { name: 'contact', body: { contacts: [{ name: 'Synthetic Contact',
+      phone: '60111111111' }] } },
+    { name: 'poll', body: { question: 'Synthetic choice?', options: ['One', 'Two'],
+      allowMultipleAnswers: false } },
+  ];
+  const directSendCredentials = [['jwt', jwtA], ['apiKey', readKey]];
+  let directSendSuccessRequests = 0;
+  for (const directCase of directSendCases) {
+    for (const [credentialName, credential] of directSendCredentials) {
+      for (const [profileLabel, profileId, connected] of [
+        ['A1', profileA1, true], ['A2', profileA2, false],
+      ]) {
+        const to = directCase.name === 'image' && credentialName === 'jwt' && profileLabel === 'A1'
+          ? conversationA1.jid
+          : `synthetic-send-${directCase.name}-${credentialName}-${profileLabel}-${suffix}@s.whatsapp.net`;
+        const beforeCount = await prisma.message.count({ where: { profileId } });
+        const response = await request('POST', `/api/v1/messages/${directCase.name}`,
+          credential, { profileId, to, ...directCase.body });
+        assert.equal(response.status, 201, `${credentialName} ${profileLabel} ${directCase.name}`);
+        assert.equal(response.value.success, true);
+        assert.equal(response.value.status, connected ? 'sent' : 'pending');
+        if (connected) assert.match(response.value.waMessageId,
+          new RegExp(`^mock_${directCase.name}_`));
+        else assert.equal(response.value.warning, 'Profile not connected, message queued');
+        const saved = await prisma.message.findUnique({
+          where: { id: response.value.messageId }, include: { conversation: true },
+        });
+        assert.ok(saved);
+        assert.equal(saved.profileId, profileId);
+        assert.equal(saved.conversation.profileId, profileId);
+        assert.equal(saved.conversationId, response.value.conversationId);
+        assert.equal(saved.conversation.jid, to);
+        assert.equal(saved.direction, 'outgoing');
+        assert.equal(saved.type, directCase.name);
+        assert.equal(saved.status, connected ? 'sent' : 'pending');
+        assert.equal(await prisma.message.count({ where: { profileId } }), beforeCount + 1);
+        if (directCase.name === 'image') assert.equal(saved.content.mimetype, 'image/jpeg');
+        if (directCase.name === 'video') assert.equal(saved.content.mimetype, 'video/mp4');
+        if (directCase.name === 'audio') {
+          assert.equal(saved.content.mimetype, 'audio/mpeg');
+          assert.equal(saved.content.ptt, true);
+        }
+        if (directCase.name === 'document') {
+          assert.equal(saved.content.filename, 'synthetic.pdf');
+          assert.equal(saved.content.mimetype, 'application/octet-stream');
+        }
+        if (directCase.name === 'location') {
+          assert.equal(saved.content.latitude, 3.1);
+          assert.equal(saved.content.longitude, 101.7);
+        }
+        if (directCase.name === 'contact') {
+          assert.equal(saved.content.name, 'Synthetic Contact');
+          assert.match(saved.content.contacts[0].vcard, /^BEGIN:VCARD/);
+        }
+        if (directCase.name === 'poll') {
+          assert.deepEqual(saved.content.options, ['One', 'Two']);
+          assert.equal(saved.content.allowMultipleAnswers, false);
+        }
+        directSendSuccessRequests++;
+      }
+    }
+  }
+  report.observed.directSendBaseline = {
+    successfulRequests: directSendSuccessRequests,
+    mockConnected: 201,
+    disconnectedPending: 201,
+  };
+  let directSendDeniedRequests = 0;
+  const directSendOrganizationIds = [jwtA.organizationId, jwtB.organizationId];
+  await waitForStableBusinessState(directSendOrganizationIds);
+  for (const directCase of directSendCases) {
+    const validBody = { to: `synthetic-denied-${directCase.name}-${suffix}@s.whatsapp.net`,
+      ...directCase.body };
+    const malformedBody = directCase.name === 'location' ? { latitude: 'bad' } :
+      directCase.name === 'contact' ? { contacts: 'bad' } :
+      directCase.name === 'poll' ? { question: 'Bad', options: 'bad' } :
+      directCase.name === 'document' ? { base64: 7 } : { base64: 7 };
+    const denialBodies = [];
+    for (const [credentialName, credential] of directSendCredentials) {
+      for (const [denialName, profileId, extraBody, forged] of [
+        ['foreign', profileB, validBody, false],
+        ['missing', crypto.randomUUID(), validBody, false],
+        ['foreign malformed', profileB, { to: validBody.to, ...malformedBody }, true],
+      ]) {
+        const route = forged ? routeWithForgedSelectors(
+          `/api/v1/messages/${directCase.name}`, profileA1, jwtA.organizationId) :
+          `/api/v1/messages/${directCase.name}`;
+        const response = await requestWithoutBusinessWrites({
+          method: 'POST', route, credential,
+          body: { profileId, ...extraBody }, expectedStatus: 404,
+          label: `${credentialName} ${directCase.name} ${denialName}`,
+          organizationIds: directSendOrganizationIds,
+        });
+        denialBodies.push(response.value);
+        directSendDeniedRequests++;
+      }
+    }
+    denialBodies.slice(1).forEach(body => assert.deepEqual(body, denialBodies[0]));
+
+    for (const [shapeName, body] of [
+      ['missing profile', validBody],
+      ['empty profile', { profileId: '', ...validBody }],
+      ['array profile', { profileId: [profileA1], ...validBody }],
+      ['object profile', { profileId: { id: profileA1 }, ...validBody }],
+    ]) {
+      await requestWithoutBusinessWrites({
+        method: 'POST', route: `/api/v1/messages/${directCase.name}`, credential: jwtA,
+        body, expectedStatus: 400, label: `${directCase.name} ${shapeName}`,
+        organizationIds: directSendOrganizationIds,
+      });
+      directSendDeniedRequests++;
+    }
+
+    for (const [credentialName, credential] of [
+      ['missing credential', null],
+      ['invalid JWT', { type: 'jwt', value: 'invalid' }],
+      ['invalid API key', { type: 'api-key', value: 'invalid' }],
+    ]) {
+      await requestWithoutBusinessWrites({
+        method: 'POST', route: `/api/v1/messages/${directCase.name}`, credential,
+        body: { profileId: profileA1, ...validBody }, expectedStatus: 401,
+        label: `${directCase.name} ${credentialName}`,
+        organizationIds: directSendOrganizationIds,
+      });
+      directSendDeniedRequests++;
+    }
+  }
+  report.observed.directSendOwnership = {
+    successfulRequests: directSendSuccessRequests,
+    deniedRequests: directSendDeniedRequests,
+    jwtOwn: 201,
+    apiKeyOwn: 201,
+    foreign: 404,
+    missingProfile: 404,
+    invalidProfileShape: 400,
+    unauthenticated: 401,
+    deniedBusinessWrites: 0,
+  };
+  report.protected.push('Seven direct-send routes enforce profile organization ownership before validation and persistence.');
+  report.decisions.push('Text, reply and reaction remain deferred until referenced messages are bound to the sending profile.');
 
   const hook = await request('POST', '/api/v1/hooks', readKey, {
     url: 'https://example.invalid/synthetic', events: ['message.received'],

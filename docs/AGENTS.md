@@ -37,6 +37,8 @@ All `.md` files in `docs/` covering:
 - `stage-2b2b-results.md` records conversation-detail ownership, strict limit behavior, isolated evidence and the Astra review stop point.
 - `stage-2b2c-message-access-handoff-2026-09-07.md` bounds message reads, cursor containment and local deletion ownership before isolated acceptance and Astra review.
 - `stage-2b2c-results.md` records message ownership, cursor containment, local deletion evidence, candidate lineage and the Astra review stop point.
+- `stage-2b2d-direct-send-handoff-2026-09-07.md` bounds seven direct-send profile ownership checks, synthetic provider acceptance and Astra review before release; quoted-message routes are deferred.
+- `stage-2b2d-results.md` records direct-send ownership, zero-denied-write evidence, candidate lineage and the Astra review stop point.
 
 ## Verification
 
