@@ -91,6 +91,11 @@ as business writes.
 - Read-only Payment Monitor adapter: summary, queue, detail, evidence metadata and
   a protected PDF evidence file returned 200. Missing credentials returned 401,
   and the read-only key received 403 on a write route.
+- Authenticated staff `/exec` browser acceptance: queue loaded in 2.56 seconds and
+  a protected PDF preview completed in 2.01 seconds. The preview produced a
+  nonzero canvas with `role="img"` and `aria-label="Payment slip PDF, page 1"`,
+  exposed its expand control, showed no fallback, had no horizontal overflow at
+  390 by 844 pixels and recorded zero browser errors.
 
 The first full API run failed before collecting two suites because the local Prisma
 client had not been generated after dependencies were restored. Generating the
@@ -120,11 +125,17 @@ recreate only the Compose `api` service with `--no-deps --no-build`. Verify API,
 PostgreSQL and Redis health plus Payment Monitor reads after recovery. Do not run
 live conversation mutations as acceptance tests.
 
-Headless browser acceptance could not establish the Google staff web-app session
-because neither retained OAuth profile supplied the required Google cookies. The
-same finance-reviewer identity successfully loaded the queue, detail and protected
-preview through the read-only Apps Script adapter. No dashboard or Apps Script code
-changed in this release.
+Future staff browser checks use the signed-in Chrome profile at
+`/home/hermes/.config/dnt-test/payment-monitor-browser-profile`, which is stored
+outside the repository with directory mode 700 and cookie-file mode 600. Launch a
+headless persistent Chromium context with that profile and the unchanged staff
+`/exec` URL. Apps Script renders the dashboard inside the nested `userHtmlFrame`;
+identify it by `#content` and the lexical `state.rows` value rather than
+`globalThis.state`. A preview passes only when an image has completed decoding with
+nonzero natural dimensions or a PDF has completed its first-page render to a
+nonzero canvas carrying the final role and aria label. Leaving the loading state or
+showing the inline-preview fallback does not pass. Suppress background attachment
+triage and avoid contact lookup, scans and mutations during acceptance.
 
 ## Astra review result
 
