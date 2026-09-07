@@ -7,9 +7,11 @@ Characterization and inventory follow-up:
 Candidate image: `multiwa-api:stage2b2c-d3bc725-overlay`, image ID
 `sha256:920bc9d3336b928a552b6a22aa28526874c74a8c2315f6f5c49b65d56de18026`.
 
-Live remains on Batch 2B.2B image
+PR 9 merged to `main` as
+`522b9c32aea78bf9ca4c22f9373bb0265416b771`. The API was recreated from the
+candidate at `2026-09-07T16:31:36Z`. Batch 2B.2B remains tagged as the rollback
+image at
 `sha256:d45b317a3e7f76339ac76150c01c7d3563b62ee541d46eb0ce01b6111a274ac4`.
-Batch 2B.2C has not been merged or deployed.
 
 ## Change
 
@@ -137,23 +139,39 @@ AUTHZ_EXPECTED_IMAGE_ID=sha256:920bc9d3336b928a552b6a22aa28526874c74a8c2315f6f5c
 pnpm run test:authz-characterization:isolated
 ```
 
-## Limits and rollback
+## Release acceptance and rollback
+
+The deployed API, PostgreSQL and Redis reported healthy. Read-only live acceptance
+used existing active records without printing message content or identifiers:
+
+- JWT and the Payment Monitor API key returned 200 for conversation messages with
+  the limit omitted, the same route with `limit=2`, and single-message detail.
+- Both conversation responses stayed bounded and chronological; message detail
+  retained its nested conversation.
+- The Payment Monitor staff `/exec` authenticated through the preserved browser
+  profile. Desktop queue load took 3.30 seconds and a protected PDF rendered in
+  5.47 seconds. Mobile queue load took 2.73 seconds and the same PDF rendered in
+  1.65 seconds at 390 by 844 pixels with no horizontal overflow. Browser errors
+  were zero.
+- No live deletion was attempted. API-key `lastUsedAt` authentication bookkeeping
+  was the only database metadata touched by API acceptance.
 
 Guard-to-service races during concurrent parent reassignment remain outside this
 batch. Local delete intentionally leaves conversation counters and last-message
 time unchanged. The existing `hasMore` heuristic and timestamp tie behavior remain.
 
-No rollback is needed before release because this candidate is not live. A later
-authorized release can retag the current Batch 2B.2B image above and recreate only
-the Compose API service with `--no-deps --no-build`.
+Rollback restores Batch 2B.2B and recreates only the API service:
 
-## Astra review handoff
+```bash
+cd /home/hermes/MultiWA
+docker tag multiwa-api:stage2b2b-00512fa multiwa-api:latest
+docker compose up -d --no-deps --no-build --force-recreate api
+```
 
-Review the original `40e2004` implementation and corrections through `d3bc725`,
-plus characterization commit `7cefc06` and the documentation follow-up. Confirm
-the two prior findings are closed: production-style routed validation now covers
-omitted, numeric and malformed limits; the 63-request matrix uses supported,
-isolated fixtures and proves default-50 plus populated A2 access. Recheck parent
-consistency, exact decorators, cursor scoping, inventory mutations, retained 45/88
-matrices, four known gaps and overlay lineage. Rerun the command above. Do not merge
-or deploy during review.
+## Release closeout
+
+Astra approved the corrected candidate through `c4d2fb5`. GitHub CI, tests, Docker
+build and the release gate passed at that head. Deployment changed only the Compose
+API container. Acceptance did not scan groups, process attachments, send messages,
+mutate reviews, delete messages, submit payments, write Register of Payments or
+change credentials.
