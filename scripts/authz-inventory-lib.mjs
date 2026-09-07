@@ -93,19 +93,92 @@ function guardNames(text) {
   return [...result];
 }
 
+const INVALID_TENANT_CHECK = Object.freeze({
+  resource: '', from: '', key: '', optional: null,
+});
+
+function tenantTokens(text) {
+  const tokens = [];
+  for (let index = 0; index < text.length;) {
+    const current = text[index];
+    if (/\s/.test(current)) {
+      index += 1;
+      continue;
+    }
+    if (current === "'" || current === '"') {
+      const quote = current;
+      let value = '';
+      let valid = true;
+      index += 1;
+      while (index < text.length && text[index] !== quote) {
+        if (text[index] === '\\') valid = false;
+        value += text[index];
+        index += 1;
+      }
+      if (index >= text.length) return null;
+      tokens.push({ type: valid ? 'string' : 'unsupported', value });
+      index += 1;
+      continue;
+    }
+    const identifier = text.slice(index).match(/^[A-Za-z_$][\w$]*/)?.[0];
+    if (identifier) {
+      tokens.push({ type: 'identifier', value: identifier });
+      index += identifier.length;
+      continue;
+    }
+    tokens.push({ type: 'punctuation', value: current });
+    index += 1;
+  }
+  return tokens;
+}
+
+function parseTenantArguments(text) {
+  const tokens = tenantTokens(text);
+  if (!tokens) return [INVALID_TENANT_CHECK];
+  let position = 0;
+  const checks = [];
+  const take = value => tokens[position]?.value === value && tokens[position++];
+  while (position < tokens.length) {
+    if (!take('{')) return [INVALID_TENANT_CHECK];
+    const fields = new Map();
+    let valid = true;
+    while (position < tokens.length && tokens[position].value !== '}') {
+      const name = tokens[position++];
+      if (!['identifier', 'string'].includes(name?.type) || fields.has(name.value) || !take(':')) {
+        valid = false;
+        break;
+      }
+      const value = tokens[position++];
+      if (!value || !['resource', 'from', 'key', 'optional'].includes(name.value)) {
+        valid = false;
+        break;
+      }
+      if (name.value === 'optional') {
+        if (value.type !== 'identifier' || !['true', 'false'].includes(value.value)) valid = false;
+        else fields.set(name.value, value.value === 'true');
+      } else if (value.type !== 'string') valid = false;
+      else fields.set(name.value, value.value);
+      if (!valid || (tokens[position]?.value !== ',' && tokens[position]?.value !== '}')) {
+        valid = false;
+        break;
+      }
+      if (tokens[position]?.value === ',') position += 1;
+    }
+    if (!valid || !take('}') || !fields.has('resource') || !fields.has('from') || !fields.has('key')) {
+      return [INVALID_TENANT_CHECK];
+    }
+    checks.push({ resource: fields.get('resource'), from: fields.get('from'),
+      key: fields.get('key'), optional: fields.get('optional') ?? false });
+    if (position === tokens.length) break;
+    if (!take(',') || position === tokens.length) return [INVALID_TENANT_CHECK];
+  }
+  return checks.length ? checks : [INVALID_TENANT_CHECK];
+}
+
 function tenantChecks(text) {
   const result = [];
   for (const call of withoutComments(text).matchAll(/@RequireTenant\(([\s\S]*?)\)/g)) {
-    for (const object of call[1].matchAll(/\{([^}]+)\}/g)) {
-      const field = name => object[1].match(new RegExp(
-        `\\b${name}\\s*:\\s*['\"]([^'\"]+)['\"]`,
-      ))?.[1] || '';
-      const optionalExpression = object[1].match(/\boptional\s*:\s*([^,}]+)/)?.[1].trim();
-      const optional = optionalExpression === undefined ? false :
-        optionalExpression === 'true' ? true : optionalExpression === 'false' ? false : null;
-      result.push({ resource: field('resource'), from: field('from'), key: field('key'),
-        optional });
-    }
+    result.push(...parseTenantArguments(call[1]));
   }
   return result;
 }

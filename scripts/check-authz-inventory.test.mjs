@@ -144,6 +144,24 @@ test('detects ownership decorators disabled with comments', () => {
   });
 });
 
+test('rejects ambiguous tenant metadata syntax on every Batch 2B.1 route', () => {
+  protectedTenantRoutes.forEach(key => {
+    const route = checkedInventory.routes.find(value => value.key === key);
+    const selectorKey = route.tenantChecks[0].key;
+    const changes = [
+      decorator => decorator.replace(/\s*}\)$/, ", 'optional': true })"),
+      decorator => decorator.replace(`key: '${selectorKey}'`,
+        `key: '${selectorKey}' + 'Wrong'`),
+      decorator => decorator.replace(/\s*}\)$/, ', ...extra })'),
+    ];
+    changes.forEach(change => {
+      const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
+        changeTenantDecorator(source, route.handler, change));
+      assert.ok(errors.includes(`route tenant-check drift: ${key}`), key);
+    });
+  });
+});
+
 test('detects weakened tenant resource, location, key and optionality', () => {
   const key = 'GET /api/v1/messages/profile/:profileId';
   const route = checkedInventory.routes.find(value => value.key === key);
@@ -153,6 +171,8 @@ test('detects weakened tenant resource, location, key and optionality', () => {
     decorator => decorator.replace("key: 'profileId'", "key: 'otherId'"),
     decorator => decorator.replace(/\s*}\)$/, ', optional: true })'),
     decorator => decorator.replace(/\s*}\)$/, ', optional: !false })'),
+    decorator => decorator.replace("key: 'profileId'", "key: 'profileId' + 'Wrong'"),
+    decorator => decorator.replace(/\s*}\)$/, ", 'optional': true })"),
   ];
   changes.forEach(change => {
     const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
