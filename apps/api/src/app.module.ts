@@ -43,6 +43,7 @@ import { IntegrationsModule } from './modules/integrations/integrations.module';
 import { GroupsModule } from './modules/groups/groups.module';
 import { BulkModule } from './modules/bulk/bulk.module';
 import { WebSocketModule } from './modules/websocket/websocket.module';
+import { TenantModule } from './common/tenant/tenant.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { WebSocketModule } from './modules/websocket/websocket.module';
       isGlobal: true,
       envFilePath: ['.env.local', '.env'],
     }),
+    TenantModule,
     
     // Task scheduling
     ScheduleModule.forRoot(),

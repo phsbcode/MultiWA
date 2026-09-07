@@ -7,10 +7,12 @@ import { ConversationsService } from './conversations.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { prisma } from '@multiwa/database';
 import { MessageContextQueryDto, SearchMessagesQueryDto } from './dto/message-history-query.dto';
+import { TenantGuard } from '../../common/tenant/tenant.guard';
+import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 
 @ApiTags('Conversations')
 @Controller('conversations')
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 export class ConversationsController {
@@ -25,6 +27,7 @@ export class ConversationsController {
   }
 
   @Get()
+  @RequireTenant({ resource: 'profile', from: 'query', key: 'profileId' })
   @ApiOperation({ summary: 'List conversations' })
   @ApiQuery({ name: 'profileId', required: true })
   @ApiQuery({ name: 'type', required: false, enum: ['user', 'group', 'broadcast'] })
@@ -129,6 +132,7 @@ export class ConversationsController {
   }
 
   @Get(':id/messages')
+  @RequireTenant({ resource: 'conversation', from: 'param', key: 'id' })
   @ApiOperation({ summary: 'Get messages in conversation' })
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'before', required: false, description: 'Get messages before this ID' })

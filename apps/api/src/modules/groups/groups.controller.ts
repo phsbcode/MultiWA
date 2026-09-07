@@ -25,10 +25,12 @@ import {
 } from './dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ProfilesService } from '../profiles/profiles.service';
+import { TenantGuard } from '../../common/tenant/tenant.guard';
+import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 
 @ApiTags('Groups')
 @Controller('groups')
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 export class GroupsController {
@@ -48,6 +50,7 @@ export class GroupsController {
   }
 
   @Get('profile/:profileId')
+  @RequireTenant({ resource: 'profile', from: 'param', key: 'profileId' })
   @ApiOperation({ summary: 'Get all groups for a profile' })
   @ApiParam({ name: 'profileId', description: 'Profile ID' })
   async getAll(@Param('profileId') profileId: string) {

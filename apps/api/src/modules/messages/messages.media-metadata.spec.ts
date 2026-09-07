@@ -40,4 +40,15 @@ describe('MessagesService media metadata reads', () => {
       include: { conversation: true },
     });
   });
+
+  it('rejects malformed or mixed-profile media IDs without a partial response', async () => {
+    const service = new MessagesService({} as any);
+    await expect(service.findMediaByProfile('profile-1', ['message-1', '']))
+      .rejects.toThrow('Every message ID must be a valid nonempty string.');
+    expect(findMany).not.toHaveBeenCalled();
+
+    findMany.mockResolvedValue([{ id: 'message-1', profileId: 'profile-1' }]);
+    await expect(service.findMediaByProfile('profile-1', ['message-1', 'message-elsewhere']))
+      .rejects.toThrow('Requested media was not found.');
+  });
 });

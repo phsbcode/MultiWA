@@ -381,12 +381,18 @@ export class MessagesService {
     if (!Array.isArray(ids) || !ids.length || ids.length > 50) {
       throw new BadRequestException('Supply between 1 and 50 message IDs.');
     }
-    const uniqueIds = [...new Set(ids.map(value => String(value || '').trim()).filter(Boolean))];
-    if (!uniqueIds.length) throw new BadRequestException('Supply at least one message ID.');
+    if (ids.some(value => typeof value !== 'string' || value.trim() !== value || !value ||
+        value.length > 128 || /[\u0000-\u001f\u007f]/.test(value))) {
+      throw new BadRequestException('Every message ID must be a valid nonempty string.');
+    }
+    const uniqueIds = [...new Set(ids)];
     const messages = await prisma.message.findMany({
       where: { profileId, id: { in: uniqueIds } },
       include: { conversation: true },
     });
+    if (messages.length !== uniqueIds.length) {
+      throw new NotFoundException('Requested media was not found.');
+    }
     const byId = new Map(messages.map((message: any) => [String(message.id), message]));
     return uniqueIds.map(id => byId.get(id)).filter(Boolean);
   }

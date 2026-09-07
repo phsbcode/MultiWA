@@ -22,10 +22,12 @@ import {
   ScheduleMessageDto,
 } from './dto';
 import { AuditService, AuditAction } from '../audit/audit.service';
+import { TenantGuard } from '../../common/tenant/tenant.guard';
+import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 
 @ApiTags('Messages')
 @Controller('messages')
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 export class MessagesController {
@@ -158,6 +160,7 @@ export class MessagesController {
 
   // Get messages by profile
   @Get('profile/:profileId')
+  @RequireTenant({ resource: 'profile', from: 'param', key: 'profileId' })
   @ApiOperation({ summary: 'Get messages by profile' })
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'offset', required: false })
@@ -187,6 +190,7 @@ export class MessagesController {
   }
 
   @Post('profile/:profileId/media')
+  @RequireTenant({ resource: 'profile', from: 'param', key: 'profileId' })
   @ApiOperation({ summary: 'Get full media payloads for bounded profile message IDs' })
   async findMediaByProfile(
     @Param('profileId') profileId: string,
@@ -196,6 +200,7 @@ export class MessagesController {
   }
 
   @Post('profile/:profileId/resolve-senders')
+  @RequireTenant({ resource: 'profile', from: 'param', key: 'profileId' })
   @ApiOperation({ summary: 'Resolve provider sender identities to phone numbers' })
   async resolveSenderPhones(
     @Param('profileId') profileId: string,
