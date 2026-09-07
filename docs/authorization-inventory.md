@@ -8,7 +8,7 @@ the gap. Later Stage 2 work must reduce those entries through behavior and tests
 
 ## Coverage
 
-Reviewed baseline: `e9fad0cb6082c9316440eb22115e0be04d84259e`.
+Reviewed baseline: `00512fa1a9c4be68b8e11f7afac71c0782f923ac`.
 
 - 232 controller routes found in source.
 - 231 routes in the public API snapshot.
