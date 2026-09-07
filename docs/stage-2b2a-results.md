@@ -2,8 +2,11 @@
 
 Candidate code commit: `e9fad0cb6082c9316440eb22115e0be04d84259e`.
 
-Candidate image: `multiwa-api:stage2b2a-e9fad0c`, image ID
-`sha256:d3943987615cef4aa7ead50ced7d0ea64d681336f88ba915d1464074aa53851f`.
+Cross-organization snapshot correction:
+`494c0d818b20f23f012189d17a8fa3883b1affcd`.
+
+Candidate image: `multiwa-api:stage2b2a-494c0d8`, image ID
+`sha256:faf91b6f31717dc0c8c73d11168c95623ec7e93e9eab58c19653e15240183bc4`.
 
 Live remains on the accepted Batch 2B.1 image
 `sha256:a332d5526e08bae77337ba7112fde5409fb8f2153fef3de9f954f04918afdda1`.
@@ -86,8 +89,8 @@ Reproduce the isolated acceptance with:
 
 ```bash
 cd /home/hermes/MultiWA
-AUTHZ_TEST_IMAGE=multiwa-api:stage2b2a-e9fad0c \
-AUTHZ_EXPECTED_IMAGE_ID=sha256:d3943987615cef4aa7ead50ced7d0ea64d681336f88ba915d1464074aa53851f \
+AUTHZ_TEST_IMAGE=multiwa-api:stage2b2a-494c0d8 \
+AUTHZ_EXPECTED_IMAGE_ID=sha256:faf91b6f31717dc0c8c73d11168c95623ec7e93e9eab58c19653e15240183bc4 \
 pnpm run test:authz-characterization:isolated
 ```
 
@@ -106,7 +109,7 @@ live conversation mutations as acceptance tests.
 
 ## Astra review handoff
 
-Review code commit `e9fad0c` and the documentation follow-up. Check the seven exact
+Review code commits `e9fad0c` and `494c0d8`, plus the documentation follow-up. Check the seven exact
 controller decorators, controller service-spy tests, all 13 inventory mutation
 tests and the 88-request conversation mutation matrix in
 `scripts/authz-characterization.mjs`. Re-run the isolated command above. Confirm
