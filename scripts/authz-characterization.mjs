@@ -80,6 +80,15 @@ try {
 
   const conversationA1 = await prisma.conversation.create({ data: {
     profileId: profileA1, jid: `synthetic-a1-${suffix}@s.whatsapp.net`, type: 'user',
+    lastMessageAt: new Date('2026-09-07T01:03:00Z'),
+  } });
+  const conversationA1Older = await prisma.conversation.create({ data: {
+    profileId: profileA1, jid: `synthetic-a1-older-${suffix}@s.whatsapp.net`, type: 'user',
+    lastMessageAt: new Date('2026-09-07T00:59:00Z'),
+  } });
+  const conversationA1Group = await prisma.conversation.create({ data: {
+    profileId: profileA1, jid: `synthetic-a1-${suffix}@g.us`, type: 'group',
+    lastMessageAt: new Date('2026-09-07T01:05:00Z'),
   } });
   const messageA1 = await prisma.message.create({ data: {
     profileId: profileA1, conversationId: conversationA1.id,
@@ -159,15 +168,36 @@ try {
   assert.equal(typeof ownMessage.mediaFingerprint, 'string');
   report.observed.sameOrganizationMessages = ownMessages.status;
 
-  const filteredMessages = await request('GET',
+  const orderedMessages = await request('GET',
+    `/api/v1/messages/profile/${profileA1}?limit=4&includeMedia=false`, jwtA);
+  assert.equal(orderedMessages.status, 200);
+  assert.deepEqual(orderedMessages.value.map(item => item.id),
+    [messageA1Latest.id, messageA1Incoming.id, messageA1Outgoing.id, messageA1.id]);
+  const sinceMessages = await request('GET',
     `/api/v1/messages/profile/${profileA1}?since=${encodeURIComponent('2026-09-07T01:01:30Z')}` +
-    '&type=text&direction=incoming&limit=1&offset=0&includeMedia=false', jwtA);
-  assert.equal(filteredMessages.status, 200);
-  assert.deepEqual(filteredMessages.value.map(item => item.id), [messageA1Incoming.id]);
+    '&includeMedia=false', jwtA);
+  assert.equal(sinceMessages.status, 200);
+  assert.deepEqual(sinceMessages.value.map(item => item.id),
+    [messageA1Latest.id, messageA1Incoming.id]);
+  const typeMessages = await request('GET',
+    `/api/v1/messages/profile/${profileA1}?type=text&includeMedia=false`, jwtA);
+  assert.equal(typeMessages.status, 200);
+  assert.deepEqual(typeMessages.value.map(item => item.id),
+    [messageA1Incoming.id, messageA1Outgoing.id]);
+  const directionMessages = await request('GET',
+    `/api/v1/messages/profile/${profileA1}?direction=outgoing&includeMedia=false`, jwtA);
+  assert.equal(directionMessages.status, 200);
+  assert.deepEqual(directionMessages.value.map(item => item.id), [messageA1Outgoing.id]);
+  const limitedMessages = await request('GET',
+    `/api/v1/messages/profile/${profileA1}?limit=2&includeMedia=false`, jwtA);
+  assert.equal(limitedMessages.status, 200);
+  assert.deepEqual(limitedMessages.value.map(item => item.id),
+    [messageA1Latest.id, messageA1Incoming.id]);
   const offsetMessages = await request('GET',
-    `/api/v1/messages/profile/${profileA1}?type=text&limit=1&offset=1&includeMedia=false`, jwtA);
+    `/api/v1/messages/profile/${profileA1}?limit=2&offset=1&includeMedia=false`, jwtA);
   assert.equal(offsetMessages.status, 200);
-  assert.deepEqual(offsetMessages.value.map(item => item.id), [messageA1Outgoing.id]);
+  assert.deepEqual(offsetMessages.value.map(item => item.id),
+    [messageA1Incoming.id, messageA1Outgoing.id]);
   report.observed.messageFilteringAndPagination = 200;
 
   const ownMedia = await request('POST', `/api/v1/messages/profile/${profileA1}/media`,
@@ -178,8 +208,21 @@ try {
     ['synthetic-latest.png', 'synthetic-a1.png']);
   report.observed.sameOrganizationMedia = ownMedia.status;
 
+  const boundaryMedia = await Promise.all(Array.from({ length: 48 }, async (_value, index) =>
+    prisma.message.create({ data: {
+      profileId: profileA1, conversationId: conversationA1.id,
+      messageId: `provider-a1-boundary-${index}-${suffix}`, direction: 'incoming',
+      senderJid: `synthetic-a1-${suffix}@s.whatsapp.net`, type: 'image',
+      content: { url: 'data:image/png;base64,aGVsbG8=', filename: `boundary-${index}.png` },
+      timestamp: new Date(-1000 - index),
+    } })));
+  const fiftyMediaIds = [messageA1Latest.id, ...boundaryMedia.map(item => item.id), messageA1.id];
+  const boundaryMediaResponse = await request('POST',
+    `/api/v1/messages/profile/${profileA1}/media`, jwtA, { ids: fiftyMediaIds });
+  assert.equal(boundaryMediaResponse.status, 201);
+  assert.deepEqual(boundaryMediaResponse.value.map(item => item.id), fiftyMediaIds);
   const overLimitMedia = await request('POST', `/api/v1/messages/profile/${profileA1}/media`,
-    jwtA, { ids: Array.from({ length: 51 }, () => messageA1.id) });
+    jwtA, { ids: [...fiftyMediaIds, messageA1.id] });
   assert.equal(overLimitMedia.status, 400);
   report.observed.mediaLimit = overLimitMedia.status;
 
@@ -221,9 +264,15 @@ try {
   report.protected.push('Conversation listing rejects a foreign organization profile ID.');
 
   const ownConversations = await request('GET',
-    `/api/v1/conversations?profileId=${profileA1}&limit=10&offset=0`, jwtA);
+    `/api/v1/conversations?profileId=${profileA1}&limit=2&offset=0`, jwtA);
   assert.equal(ownConversations.status, 200);
-  assert.ok(ownConversations.value.conversations.some(item => item.id === conversationA1.id));
+  assert.deepEqual(ownConversations.value.conversations.map(item => item.id),
+    [conversationA1Group.id, conversationA1.id]);
+  const offsetConversations = await request('GET',
+    `/api/v1/conversations?profileId=${profileA1}&type=user&limit=1&offset=1`, jwtA);
+  assert.equal(offsetConversations.status, 200);
+  assert.deepEqual(offsetConversations.value.conversations.map(item => item.id),
+    [conversationA1Older.id]);
   report.observed.sameOrganizationConversationList = ownConversations.status;
 
   const ownConversationMessages = await request('GET',
@@ -243,8 +292,11 @@ try {
     `/api/v1/conversations/${conversationA1.id}/messages?limit=2&before=${messageA2.id}`, jwtA);
   const foreignOrganizationCursor = await request('GET',
     `/api/v1/conversations/${conversationA1.id}/messages?limit=2&before=${messageB.id}`, jwtA);
+  const missingCursor = await request('GET',
+    `/api/v1/conversations/${conversationA1.id}/messages?limit=2&before=${crypto.randomUUID()}`, jwtA);
   assert.equal(sameOrganizationCursor.status, 404);
   assert.equal(foreignOrganizationCursor.status, 404);
+  assert.equal(missingCursor.status, 404);
   report.observed.conversationCursorContainment = 404;
 
   const foreignConversationMessages = await request('GET',

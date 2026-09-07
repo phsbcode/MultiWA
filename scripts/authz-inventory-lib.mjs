@@ -40,9 +40,54 @@ function joinRoute(prefix, route) {
     .replace(/\/{2,}/g, '/').replace(/\/$/, '') || '/';
 }
 
+function withoutComments(text) {
+  let result = '';
+  let quote = '';
+  for (let index = 0; index < text.length; index += 1) {
+    const current = text[index];
+    const next = text[index + 1];
+    if (quote) {
+      result += current;
+      if (current === '\\') result += text[++index] || '';
+      else if (current === quote) quote = '';
+      continue;
+    }
+    if (current === "'" || current === '"' || current === '`') {
+      quote = current;
+      result += current;
+      continue;
+    }
+    if (current === '/' && next === '/') {
+      result += '  ';
+      index += 2;
+      while (index < text.length && text[index] !== '\n') {
+        result += ' ';
+        index += 1;
+      }
+      if (index < text.length) result += '\n';
+      continue;
+    }
+    if (current === '/' && next === '*') {
+      result += '  ';
+      index += 2;
+      while (index < text.length && !(text[index] === '*' && text[index + 1] === '/')) {
+        result += text[index] === '\n' ? '\n' : ' ';
+        index += 1;
+      }
+      if (index < text.length) {
+        result += '  ';
+        index += 1;
+      }
+      continue;
+    }
+    result += current;
+  }
+  return result;
+}
+
 function guardNames(text) {
   const result = new Set();
-  for (const match of text.matchAll(/@UseGuards\(([^)]*)\)/g)) {
+  for (const match of withoutComments(text).matchAll(/@UseGuards\(([^)]*)\)/g)) {
     match[1].split(',').map(value => value.trim()).filter(Boolean).forEach(value => result.add(value));
   }
   return [...result];
@@ -50,13 +95,16 @@ function guardNames(text) {
 
 function tenantChecks(text) {
   const result = [];
-  for (const call of text.matchAll(/@RequireTenant\(([\s\S]*?)\)/g)) {
+  for (const call of withoutComments(text).matchAll(/@RequireTenant\(([\s\S]*?)\)/g)) {
     for (const object of call[1].matchAll(/\{([^}]+)\}/g)) {
       const field = name => object[1].match(new RegExp(
         `\\b${name}\\s*:\\s*['\"]([^'\"]+)['\"]`,
       ))?.[1] || '';
+      const optionalExpression = object[1].match(/\boptional\s*:\s*([^,}]+)/)?.[1].trim();
+      const optional = optionalExpression === undefined ? false :
+        optionalExpression === 'true' ? true : optionalExpression === 'false' ? false : null;
       result.push({ resource: field('resource'), from: field('from'), key: field('key'),
-        optional: /\boptional\s*:\s*true\b/.test(object[1]) });
+        optional });
     }
   }
   return result;

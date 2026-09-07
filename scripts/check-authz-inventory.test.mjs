@@ -135,6 +135,15 @@ test('detects removal of every Batch 2B.1 ownership decorator', () => {
   });
 });
 
+test('detects ownership decorators disabled with comments', () => {
+  protectedTenantRoutes.forEach(key => {
+    const route = checkedInventory.routes.find(value => value.key === key);
+    const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
+      changeTenantDecorator(source, route.handler, decorator => `// ${decorator}`));
+    assert.ok(errors.includes(`route tenant-check drift: ${key}`), key);
+  });
+});
+
 test('detects weakened tenant resource, location, key and optionality', () => {
   const key = 'GET /api/v1/messages/profile/:profileId';
   const route = checkedInventory.routes.find(value => value.key === key);
@@ -143,12 +152,22 @@ test('detects weakened tenant resource, location, key and optionality', () => {
     decorator => decorator.replace("from: 'param'", "from: 'query'"),
     decorator => decorator.replace("key: 'profileId'", "key: 'otherId'"),
     decorator => decorator.replace(/\s*}\)$/, ', optional: true })'),
+    decorator => decorator.replace(/\s*}\)$/, ', optional: !false })'),
   ];
   changes.forEach(change => {
     const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
       changeTenantDecorator(source, route.handler, change));
     assert.ok(errors.includes(`route tenant-check drift: ${key}`));
   });
+});
+
+test('detects TenantGuard disabled with a comment', () => {
+  const key = 'GET /api/v1/messages/profile/:profileId';
+  const route = checkedInventory.routes.find(value => value.key === key);
+  const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
+    source.replace('@UseGuards(JwtOrApiKeyGuard, TenantGuard)',
+      '// @UseGuards(JwtOrApiKeyGuard, TenantGuard)'));
+  assert.ok(errors.includes(`route guard drift: ${key}`));
 });
 
 test('detects removal of TenantGuard from a protected controller', () => {
