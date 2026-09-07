@@ -15,12 +15,17 @@ Utility scripts for development, code review, API contract validation, and CI/CD
 | `test-webhook.sh` | Tests webhook delivery |
 | `webhook-receiver.js` | Test webhook receiver server |
 | `api-routes.snapshot.json` | Snapshot of all API routes for contract checking |
+| `authz-routes.inventory.json` | Reviewed route, selector, ownership and permission inventory |
+| `check-authz-inventory.mjs` | Validates authorization inventory against current source |
+| `authz-characterization.mjs` | Runs opt-in HTTP characterization against isolated services |
+| `run-authz-characterization-isolated.sh` | Reuses the preserved isolated containers to run authorization characterization without live credentials |
 
 ## Local Contracts
 
 - Scripts are POSIX-shell or Node.js
 - `check-api-contract.mjs` is the gateway for API compatibility checks
 - `api-routes.snapshot.json` is the source of truth for route validation
+- Authorization inventory updates are drafts until selector, evidence and status fields are reviewed; its checker must keep known gaps visible.
 
 ## Work Guidance
 

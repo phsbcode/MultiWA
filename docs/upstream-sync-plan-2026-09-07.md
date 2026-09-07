@@ -69,6 +69,12 @@ Release separately. This is the smallest high-priority correction.
 
 ## Stage 2: organization ownership and API-key permissions
 
+Stage 2A implementation must follow `stage-2a-authorization-handoff-2026-09-07.md`.
+Its inventory includes non-controller entrypoints and distinguishes existing
+protection from confirmed gaps. It does not change runtime authorization.
+Implementation evidence is recorded in `authorization-inventory.md` and
+`stage-2a-results.md`.
+
 Upstream references: `54667f2`, `a96aaed`, `5917686`, `8c5c6fa`, `c320fff`,
 `dcc05cd`, `c403bd2`. Consult pinned upstream `common/tenant/` and
 `modules/auth/guards/api-key-scope.guard.ts`.

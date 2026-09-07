@@ -28,6 +28,8 @@ All `.md` files in `docs/` covering:
 - Architecture changes should update `04-system-architecture.md` and `05-database-design.md`
 - New features should get a doc following the existing numbering scheme
 - `upstream-sync-plan-2026-09-07.md` defines the staged selective upstream port, DNT compatibility checks and release checkpoints for the September 2026 synchronization work.
+- `stage-2a-authorization-handoff-2026-09-07.md` defines authorization inventory and characterization deliverables before Stage 2 enforcement changes.
+- `authorization-inventory.md` summarizes the checked route inventory and DNT compatibility boundaries; `stage-2a-results.md` records isolated baseline behavior and the Stage 2B backlog.
 
 ## Verification
 

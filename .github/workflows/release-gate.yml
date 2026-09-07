@@ -47,6 +47,9 @@ jobs:
       - name: API contract drift check
         run: pnpm run check:api-contract
 
+      - name: Authorization inventory checks
+        run: pnpm run check:authz-inventory && pnpm run check:authz-inventory:test
+
       - name: Confirm no internal-only files are tracked
         run: |
           set -e

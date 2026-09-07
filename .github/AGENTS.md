@@ -21,6 +21,7 @@ GitHub configuration: CI/CD workflows, issue templates, pull request template, a
 - CI must pass for PR merge
 - Releases follow semantic versioning
 - Docs site deploys from `docs-site/` build
+- Release Gate validates both the public API contract and the reviewed authorization inventory; known inventory gaps remain explicit until enforcement stages remove them.
 
 ## Work Guidance
 
