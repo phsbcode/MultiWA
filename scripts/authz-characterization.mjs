@@ -466,8 +466,12 @@ try {
 
   for (const mutation of mutationCases) {
     const foreignFixture = await mutationFixture(profileB, `foreign-${mutation.name}`);
+    const callerOrganizationFixture = await mutationFixture(profileA1,
+      `denial-anchor-${mutation.name}`);
     const foreignPath = `/api/v1/conversations/${foreignFixture.conversation.id}${mutation.suffix}`;
     const foreignBefore = await mutationSnapshot(foreignFixture.conversation.id);
+    const callerOrganizationBefore = await mutationSnapshot(
+      callerOrganizationFixture.conversation.id);
     const denialBodies = [];
 
     for (const [credentialName, credential] of mutationCredentials) {
@@ -487,6 +491,9 @@ try {
       denialBodies.push(directForeign.value);
       assert.deepEqual(await mutationSnapshot(foreignFixture.conversation.id), foreignBefore,
         `${credentialName} ${mutation.name} denied requests must not write`);
+      assert.deepEqual(await mutationSnapshot(callerOrganizationFixture.conversation.id),
+        callerOrganizationBefore,
+        `${credentialName} ${mutation.name} denied requests must not write to caller records`);
     }
     assert.deepEqual(denialBodies[0], denialBodies[1],
       `${mutation.name} JWT and API-key denial bodies must match`);
