@@ -36,6 +36,7 @@ All `.md` files in `docs/` covering:
 - `stage-2b2b-conversation-detail-handoff-2026-09-07.md` bounds the next batch to conversation-detail ownership, message-limit validation and isolated acceptance before Astra review.
 - `stage-2b2b-results.md` records conversation-detail ownership, strict limit behavior, isolated evidence and the Astra review stop point.
 - `stage-2b2c-message-access-handoff-2026-09-07.md` bounds message reads, cursor containment and local deletion ownership before isolated acceptance and Astra review.
+- `stage-2b2c-results.md` records message ownership, cursor containment, local deletion evidence, candidate lineage and the Astra review stop point.
 
 ## Verification
 
