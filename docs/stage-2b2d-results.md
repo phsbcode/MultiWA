@@ -3,6 +3,8 @@
 Runtime source commit: `5fb75499279c623c90147a0c78ac491d9dc0fa72`.
 Characterization and inventory commit:
 `9fcd5fe18be7edefa31f4c46ff6df73fc5b3fb6c`.
+Acceptance correction commit:
+`743292aae91ae2aca40d0dda99d55eec824eab9c`.
 
 Candidate image: `multiwa-api:stage2b2d-5fb7549-overlay`, image ID
 `sha256:f4b0a187e5cc6376a322abb861343f3ff9866677983a72469971449c87e6f26a`.
@@ -41,8 +43,8 @@ success requests: every route through both JWT and API-key credentials on connec
 A1 and disconnected A2 profiles. This recorded the existing sent and pending
 contracts.
 
-The candidate repeated those 28 successes and completed 91 denial requests, for a
-119-request direct-send matrix. It verified:
+The candidate repeated those 28 successes and completed 98 denial requests, for a
+126-request direct-send matrix. It verified:
 
 - A1 mock sends returned 201/sent with the expected inert engine message type.
 - A2 sends returned 201/pending without provider access.
@@ -53,14 +55,18 @@ The candidate repeated those 28 successes and completed 91 denial requests, for 
   Forged query selectors and malformed message content did not bypass ownership.
 - Missing, empty, array and object profile selectors returned 400. Missing or
   invalid JWT/API-key credentials returned 401 on every route.
+- An owned profile with an invalid DTO returned 400 on every route before service
+  execution. Routed tests restore the exact DTO parameter metadata emitted by the
+  production compiler and independently prove the same behavior.
 - Before and after every denied request, the test compared complete profiles,
   conversations, messages, scheduled messages and audit rows for both synthetic
   organizations. Denied business writes were zero.
 
 The mock adapter's acknowledgement callbacks are asynchronous. Characterization
-waits for two identical full snapshots before denial checks, so legitimate mock
-status changes cannot mask or falsely report a denied write. Failures report only
-the operation label rather than dumping records.
+tracks every connected synthetic message and waits until each reaches the terminal
+`read` acknowledgement before denial checks. Legitimate mock status changes cannot
+mask or falsely report a denied write. Failures report only the operation label
+rather than dumping records.
 
 The run retained Batch 2B.1 compatibility, the 45-request conversation-detail
 matrix, 88-request conversation-mutation matrix and 63-request message-access
@@ -69,8 +75,10 @@ creation, cross-organization hook visibility and inactive-owner API keys.
 
 ## Verification
 
-- Focused direct-send guard/controller/service suites: 61 passed.
-- Full API suite: 239 passed; two opt-in integration tests skipped.
+- Focused direct-send guard/controller/service suites: 75 passed. Service tests
+  assert exact normalized recipients, provider payloads and complete sent/pending
+  responses for all seven message types.
+- Full API suite: 253 passed; two opt-in integration tests skipped.
 - API typecheck and production build: passed.
 - Authorization inventory mutation suite: 17 passed.
 - Inventory: 232 controller routes plus four supplementary entries; 81 protected,
@@ -103,7 +111,7 @@ AUTHZ_EXPECTED_IMAGE_ID=sha256:f4b0a187e5cc6376a322abb861343f3ff9866677983a72469
 pnpm run test:authz-characterization:isolated
 ```
 
-The runtime image is from `5fb7549`; characterization commit `9fcd5fe` supplies the
+The runtime image is from `5fb7549`; correction commit `743292a` supplies the final
 mounted test script.
 
 ## Limits and review stop
