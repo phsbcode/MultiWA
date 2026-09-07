@@ -164,6 +164,12 @@ For the same restricted integration, `GET /groups/dnt-operations/profile/:profil
 | `GET` | `/messages/:id` | Get a single message |
 | `DELETE` | `/messages/:id` | Delete a message locally |
 
+Message routes that read by conversation, read one local message, or delete one
+local message verify organization ownership before service execution. A message's
+stored profile must match its conversation profile. Conversation cursors must
+belong to the selected conversation; foreign, missing and mismatched resources
+return a generic 404.
+
 ### Bulk Messaging (`/bulk`)
 
 | Method | Endpoint | Description |

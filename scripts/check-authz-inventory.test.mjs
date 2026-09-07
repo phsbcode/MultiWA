@@ -111,10 +111,16 @@ const conversationMutationRoutes = [
   'DELETE /api/v1/conversations/:id',
 ];
 const conversationDetailRoutes = ['GET /api/v1/conversations/:id'];
+const messageAccessRoutes = [
+  'GET /api/v1/messages/conversation/:conversationId',
+  'GET /api/v1/messages/:id',
+  'DELETE /api/v1/messages/:id',
+];
 const protectedTenantRoutes = [
   ...batch2b1Routes,
   ...conversationMutationRoutes,
   ...conversationDetailRoutes,
+  ...messageAccessRoutes,
 ];
 
 function mutateSource(file, mutation) {
@@ -199,6 +205,24 @@ test('detects weakened tenant selectors on enforced conversation routes', () => 
   });
 });
 
+test('detects weakened tenant selectors on enforced message access routes', () => {
+  messageAccessRoutes.forEach(key => {
+    const route = checkedInventory.routes.find(value => value.key === key);
+    const check = route.tenantChecks[0];
+    const changes = [
+      decorator => decorator.replace(`resource: '${check.resource}'`, "resource: 'profile'"),
+      decorator => decorator.replace("from: 'param'", "from: 'query'"),
+      decorator => decorator.replace(`key: '${check.key}'`, "key: 'otherId'"),
+      decorator => decorator.replace(/\s*}\)$/, ', optional: true })'),
+    ];
+    changes.forEach(change => {
+      const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
+        changeTenantDecorator(source, route.handler, change));
+      assert.ok(errors.includes(`route tenant-check drift: ${key}`), key);
+    });
+  });
+});
+
 test('detects TenantGuard disabled with a comment', () => {
   const key = 'GET /api/v1/messages/profile/:profileId';
   const route = checkedInventory.routes.find(value => value.key === key);
@@ -218,6 +242,20 @@ test('detects removal of TenantGuard from a protected controller', () => {
 
 test('detects TenantGuard removal or commenting for enforced conversation routes', () => {
   [...conversationMutationRoutes, ...conversationDetailRoutes].forEach(key => {
+    const route = checkedInventory.routes.find(value => value.key === key);
+    for (const replacement of [
+      '// @UseGuards(JwtOrApiKeyGuard, TenantGuard)',
+      '@UseGuards(JwtOrApiKeyGuard)',
+    ]) {
+      const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
+        source.replace('@UseGuards(JwtOrApiKeyGuard, TenantGuard)', replacement));
+      assert.ok(errors.includes(`route guard drift: ${key}`), key);
+    }
+  });
+});
+
+test('detects TenantGuard removal or commenting for enforced message access routes', () => {
+  messageAccessRoutes.forEach(key => {
     const route = checkedInventory.routes.find(value => value.key === key);
     for (const replacement of [
       '// @UseGuards(JwtOrApiKeyGuard, TenantGuard)',

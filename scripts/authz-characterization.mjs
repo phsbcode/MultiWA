@@ -100,6 +100,13 @@ async function expectedConversationDetail(conversationId, messageLimit = 50) {
   return JSON.parse(JSON.stringify(conversation));
 }
 
+async function expectedMessageDetail(messageId) {
+  const message = await prisma.message.findUnique({
+    where: { id: messageId }, include: { conversation: true },
+  });
+  return JSON.parse(JSON.stringify(message));
+}
+
 async function requestWithoutConversationWrites({
   method, route, credential, body, expectedStatus, label, conversationIds,
 }) {
@@ -232,6 +239,60 @@ try {
     senderJid: `synthetic-detail-b-${suffix}@s.whatsapp.net`, type: 'detail-fixture',
     content: { text: 'synthetic foreign detail' }, status: 'delivered',
     metadata: { fixture: 'detail-b' }, timestamp: new Date('2026-09-07T03:00:00Z'),
+  } });
+
+  const accessConversationA1 = await prisma.conversation.create({ data: {
+    profileId: profileA1, jid: `synthetic-access-a1-${suffix}@s.whatsapp.net`,
+    name: 'Synthetic access A1', type: 'user', metadata: { fixture: 'access-a1' },
+    lastMessageAt: new Date(-200000),
+  } });
+  const accessMessagesA1 = await Promise.all(Array.from({ length: 4 }, (_value, index) =>
+    prisma.message.create({ data: {
+      profileId: profileA1, conversationId: accessConversationA1.id,
+      messageId: `provider-access-a1-${index}-${suffix}`, direction: 'access-fixture',
+      senderJid: `synthetic-access-a1-${suffix}@s.whatsapp.net`, type: 'access-fixture',
+      content: { text: `synthetic access A1 ${index}` }, status: 'delivered',
+      metadata: { fixture: 'access-a1', index: index },
+      timestamp: new Date(-500000 + index * 1000),
+    } })));
+  const accessConversationA2 = await prisma.conversation.create({ data: {
+    profileId: profileA2, jid: `synthetic-access-a2-${suffix}@s.whatsapp.net`,
+    name: 'Synthetic access A2', type: 'user', metadata: { fixture: 'access-a2' },
+    lastMessageAt: new Date(-300000),
+  } });
+  const accessMessageA2 = await prisma.message.create({ data: {
+    profileId: profileA2, conversationId: accessConversationA2.id,
+    messageId: `provider-access-a2-${suffix}`, direction: 'access-fixture',
+    senderJid: `synthetic-access-a2-${suffix}@s.whatsapp.net`, type: 'access-fixture',
+    content: { text: 'synthetic access A2' }, status: 'delivered',
+    metadata: { fixture: 'access-a2' }, timestamp: new Date(-600000),
+  } });
+  const accessEmptyA2 = await prisma.conversation.create({ data: {
+    profileId: profileA2, jid: `synthetic-access-empty-a2-${suffix}@s.whatsapp.net`,
+    name: 'Synthetic empty access A2', type: 'user',
+    metadata: { fixture: 'access-empty-a2' },
+  } });
+  const accessConversationB = await prisma.conversation.create({ data: {
+    profileId: profileB, jid: `synthetic-access-b-${suffix}@s.whatsapp.net`,
+    name: 'Synthetic access B', type: 'user', metadata: { fixture: 'access-b' },
+    lastMessageAt: new Date(-400000),
+  } });
+  const accessMessagesB = await Promise.all(Array.from({ length: 2 }, (_value, index) =>
+    prisma.message.create({ data: {
+      profileId: profileB, conversationId: accessConversationB.id,
+      messageId: `provider-access-b-${index}-${suffix}`, direction: 'access-fixture',
+      senderJid: `synthetic-access-b-${suffix}@s.whatsapp.net`, type: 'access-fixture',
+      content: { text: `synthetic access B ${index}` }, status: 'delivered',
+      metadata: { fixture: 'access-b', index: index },
+      timestamp: new Date(-700000 + index * 1000),
+    } })));
+  const inconsistentMessage = await prisma.message.create({ data: {
+    profileId: profileA1, conversationId: accessConversationB.id,
+    messageId: `provider-access-inconsistent-${suffix}`, direction: 'access-fixture',
+    senderJid: `synthetic-access-inconsistent-${suffix}@s.whatsapp.net`,
+    type: 'access-fixture', content: { text: 'synthetic inconsistent parent' },
+    status: 'delivered', metadata: { fixture: 'access-inconsistent' },
+    timestamp: new Date(-800000),
   } });
 
   const inertProvider = await request('POST', `/api/v1/profiles/${profileA1}/connect`, jwtA, {});
@@ -601,6 +662,220 @@ try {
   };
   report.protected.push('Conversation detail enforces organization ownership before strict message-limit validation.');
   report.decisions.push('Conversation detail accepts only canonical decimal limits from 1 through 100 and defaults to 50.');
+
+  const messageAccessCredentials = [['jwt', jwtA], ['apiKey', readKey]];
+  const accessSnapshotIds = [accessConversationA1.id, accessConversationB.id];
+  const expectedAccessMessages = messages => JSON.parse(JSON.stringify(messages));
+
+  for (const [credentialName, credential] of messageAccessCredentials) {
+    const defaultConversationMessages = await requestWithoutConversationWrites({
+      method: 'GET', route: `/api/v1/messages/conversation/${accessConversationA1.id}`,
+      credential, expectedStatus: 200,
+      label: `${credentialName} conversation messages default`,
+      conversationIds: accessSnapshotIds,
+    });
+    assert.deepEqual(defaultConversationMessages.value,
+      { messages: expectedAccessMessages(accessMessagesA1), hasMore: false });
+
+    const limitedConversationMessages = await requestWithoutConversationWrites({
+      method: 'GET',
+      route: `/api/v1/messages/conversation/${accessConversationA1.id}?limit=2`,
+      credential, expectedStatus: 200,
+      label: `${credentialName} conversation messages limit`,
+      conversationIds: accessSnapshotIds,
+    });
+    assert.deepEqual(limitedConversationMessages.value,
+      { messages: expectedAccessMessages(accessMessagesA1.slice(-2)), hasMore: true });
+
+    const cursorConversationMessages = await requestWithoutConversationWrites({
+      method: 'GET', route: `/api/v1/messages/conversation/${accessConversationA1.id}` +
+        `?limit=2&before=${accessMessagesA1[2].id}`,
+      credential, expectedStatus: 200,
+      label: `${credentialName} conversation messages cursor`,
+      conversationIds: accessSnapshotIds,
+    });
+    assert.deepEqual(cursorConversationMessages.value,
+      { messages: expectedAccessMessages(accessMessagesA1.slice(0, 2)), hasMore: true });
+
+    const emptyConversationMessages = await requestWithoutConversationWrites({
+      method: 'GET', route: `/api/v1/messages/conversation/${accessEmptyA2.id}`,
+      credential, expectedStatus: 200,
+      label: `${credentialName} empty A2 conversation messages`,
+      conversationIds: [accessEmptyA2.id, accessConversationB.id],
+    });
+    assert.deepEqual(emptyConversationMessages.value, { messages: [], hasMore: false });
+
+    const cursorDenialBodies = [];
+    for (const [label, cursor] of [
+      ['missing', crypto.randomUUID()],
+      ['same organization', accessMessageA2.id],
+      ['foreign organization', accessMessagesB[0].id],
+    ]) {
+      const response = await requestWithoutConversationWrites({
+        method: 'GET', route: `/api/v1/messages/conversation/${accessConversationA1.id}` +
+          `?limit=2&before=${cursor}`,
+        credential, expectedStatus: 404,
+        label: `${credentialName} ${label} conversation cursor`,
+        conversationIds: accessSnapshotIds,
+      });
+      cursorDenialBodies.push(response.value);
+    }
+    assert.deepEqual(cursorDenialBodies[0], cursorDenialBodies[1]);
+    assert.deepEqual(cursorDenialBodies[0], cursorDenialBodies[2]);
+
+    const missingConversationId = crypto.randomUUID();
+    const foreignConversationMessages = await requestWithoutConversationWrites({
+      method: 'GET', route: `/api/v1/messages/conversation/${accessConversationB.id}`,
+      credential, expectedStatus: 404,
+      label: `${credentialName} foreign conversation messages`,
+      conversationIds: accessSnapshotIds,
+    });
+    const missingConversationMessages = await requestWithoutConversationWrites({
+      method: 'GET', route: `/api/v1/messages/conversation/${missingConversationId}`,
+      credential, expectedStatus: 404,
+      label: `${credentialName} missing conversation messages`,
+      conversationIds: accessSnapshotIds,
+    });
+    const invalidCursorForeignConversation = await requestWithoutConversationWrites({
+      method: 'GET', route: `/api/v1/messages/conversation/${accessConversationB.id}` +
+        `?before=${crypto.randomUUID()}`,
+      credential, expectedStatus: 404,
+      label: `${credentialName} foreign conversation before cursor validation`,
+      conversationIds: accessSnapshotIds,
+    });
+    const forgedConversationMessages = await requestWithoutConversationWrites({
+      method: 'GET', route: routeWithForgedSelectors(
+        `/api/v1/messages/conversation/${accessConversationB.id}`, profileA1,
+        jwtA.organizationId), credential, expectedStatus: 404,
+      label: `${credentialName} forged conversation message selectors`,
+      conversationIds: accessSnapshotIds,
+    });
+    assert.deepEqual(foreignConversationMessages.value, missingConversationMessages.value);
+    assert.deepEqual(invalidCursorForeignConversation.value, foreignConversationMessages.value);
+    assert.deepEqual(forgedConversationMessages.value, foreignConversationMessages.value);
+
+    for (const ownedMessage of [accessMessagesA1[0], accessMessageA2]) {
+      const conversationId = ownedMessage.conversationId;
+      const messageDetail = await requestWithoutConversationWrites({
+        method: 'GET', route: `/api/v1/messages/${ownedMessage.id}`,
+        credential, expectedStatus: 200,
+        label: `${credentialName} owned message detail`,
+        conversationIds: [conversationId, accessConversationB.id],
+      });
+      assert.deepEqual(messageDetail.value, await expectedMessageDetail(ownedMessage.id));
+    }
+
+    const missingMessageId = crypto.randomUUID();
+    const foreignMessage = await requestWithoutConversationWrites({
+      method: 'GET', route: `/api/v1/messages/${accessMessagesB[0].id}`,
+      credential, expectedStatus: 404, label: `${credentialName} foreign message detail`,
+      conversationIds: accessSnapshotIds,
+    });
+    const missingMessage = await requestWithoutConversationWrites({
+      method: 'GET', route: `/api/v1/messages/${missingMessageId}`,
+      credential, expectedStatus: 404, label: `${credentialName} missing message detail`,
+      conversationIds: accessSnapshotIds,
+    });
+    const inconsistentMessageDetail = await requestWithoutConversationWrites({
+      method: 'GET', route: `/api/v1/messages/${inconsistentMessage.id}`,
+      credential, expectedStatus: 404,
+      label: `${credentialName} inconsistent message detail`,
+      conversationIds: accessSnapshotIds,
+    });
+    const forgedMessage = await requestWithoutConversationWrites({
+      method: 'GET', route: routeWithForgedSelectors(
+        `/api/v1/messages/${accessMessagesB[0].id}`, profileA1, jwtA.organizationId),
+      credential, expectedStatus: 404,
+      label: `${credentialName} forged message selectors`,
+      conversationIds: accessSnapshotIds,
+    });
+    assert.deepEqual(foreignMessage.value, missingMessage.value);
+    assert.deepEqual(inconsistentMessageDetail.value, foreignMessage.value);
+    assert.deepEqual(forgedMessage.value, foreignMessage.value);
+
+    for (const [profileLabel, deleteProfileId, deleteConversation] of [
+      ['A1', profileA1, accessConversationA1],
+      ['A2', profileA2, accessConversationA2],
+    ]) {
+      const deleteTarget = await prisma.message.create({ data: {
+        profileId: deleteProfileId, conversationId: deleteConversation.id,
+        messageId: `provider-access-delete-${credentialName}-${profileLabel}-${suffix}`,
+        direction: 'access-fixture', senderJid: `synthetic-delete-${suffix}@s.whatsapp.net`,
+        type: 'access-fixture', content: { text: 'synthetic local delete target' },
+        status: 'delivered', metadata: { fixture: 'delete-target' },
+        timestamp: new Date(-900000),
+      } });
+      const deleteBefore = await mutationSnapshot(deleteConversation.id);
+      const foreignBefore = await mutationSnapshot(accessConversationB.id);
+      const deleteResponse = await request('DELETE', `/api/v1/messages/${deleteTarget.id}`,
+        credential);
+      assert.equal(deleteResponse.status, 200);
+      assert.deepEqual(deleteResponse.value, { success: true });
+      assert.equal(await prisma.message.findUnique({ where: { id: deleteTarget.id } }), null);
+      const deleteAfter = await mutationSnapshot(deleteConversation.id);
+      assert.deepEqual(deleteAfter.conversation, deleteBefore.conversation);
+      assert.deepEqual(deleteAfter.messages,
+        deleteBefore.messages.filter(message => message.id !== deleteTarget.id));
+      assert.deepEqual(await mutationSnapshot(accessConversationB.id), foreignBefore);
+
+      const repeatedDelete = await requestWithoutConversationWrites({
+        method: 'DELETE', route: `/api/v1/messages/${deleteTarget.id}`,
+        credential, expectedStatus: 404,
+        label: `${credentialName} repeated ${profileLabel} local delete`,
+        conversationIds: [deleteConversation.id, accessConversationB.id],
+      });
+      assert.deepEqual(repeatedDelete.value, foreignMessage.value);
+    }
+    for (const [label, messageId] of [
+      ['foreign', accessMessagesB[1].id],
+      ['missing', crypto.randomUUID()],
+      ['inconsistent', inconsistentMessage.id],
+    ]) {
+      const response = await requestWithoutConversationWrites({
+        method: 'DELETE', route: `/api/v1/messages/${messageId}`,
+        credential, expectedStatus: 404, label: `${credentialName} ${label} local delete`,
+        conversationIds: accessSnapshotIds,
+      });
+      assert.deepEqual(response.value, foreignMessage.value);
+    }
+    const forgedDelete = await requestWithoutConversationWrites({
+      method: 'DELETE', route: routeWithForgedSelectors(
+        `/api/v1/messages/${accessMessagesB[1].id}`, profileA1, jwtA.organizationId),
+      credential, expectedStatus: 404, label: `${credentialName} forged local delete`,
+      conversationIds: accessSnapshotIds,
+    });
+    assert.deepEqual(forgedDelete.value, foreignMessage.value);
+    const forgedBodyDelete = await requestWithoutConversationWrites({
+      method: 'DELETE', route: `/api/v1/messages/${accessMessagesB[1].id}`,
+      credential, body: { profileId: profileA1, organizationId: jwtA.organizationId },
+      expectedStatus: 404, label: `${credentialName} forged body local delete`,
+      conversationIds: accessSnapshotIds,
+    });
+    assert.deepEqual(forgedBodyDelete.value, foreignMessage.value);
+  }
+
+  for (const [routeName, method, route] of [
+    ['conversation messages', 'GET', `/api/v1/messages/conversation/${accessConversationA1.id}`],
+    ['message detail', 'GET', `/api/v1/messages/${accessMessagesA1[0].id}`],
+    ['local delete', 'DELETE', `/api/v1/messages/${accessMessagesA1[0].id}`],
+  ]) {
+    for (const [credentialName, credential] of [
+      ['missing credential', null],
+      ['invalid JWT', { type: 'jwt', value: 'invalid' }],
+      ['invalid API key', { type: 'api-key', value: 'invalid' }],
+    ]) {
+      await requestWithoutConversationWrites({ method, route, credential,
+        expectedStatus: 401, label: `${routeName} ${credentialName}`,
+        conversationIds: accessSnapshotIds });
+    }
+  }
+  report.observed.messageAccess = {
+    jwtOwn: 200, apiKeyOwn: 200, foreign: 404, missing: 404,
+    invalidCursor: 404, localDelete: 200, repeatedDelete: 404,
+    inconsistentParent: 404, unauthenticated: 401, deniedBusinessWrites: 0,
+  };
+  report.protected.push('Conversation message reads, message detail and local deletion enforce organization ownership.');
+  report.decisions.push('Message conversation cursors must belong to the selected authorized conversation.');
 
   const mutationCases = [
     { name: 'read', method: 'PUT', suffix: '/read' },

@@ -493,7 +493,7 @@ export function validateInventory(root, inventory, discovered = discoverControll
     if (!Array.isArray(entry.selectors)) errors.push(`${entry.key}: selectors missing`);
     if (!Array.isArray(entry.tenantChecks)) errors.push(`${entry.key}: tenantChecks missing`);
     (entry.tenantChecks || []).forEach(check => {
-      if (!['profile', 'conversation'].includes(check.resource) ||
+      if (!['profile', 'conversation', 'message'].includes(check.resource) ||
           !['param', 'query', 'body'].includes(check.from) || !check.key ||
           typeof check.optional !== 'boolean') {
         errors.push(`${entry.key}: malformed tenant check`);

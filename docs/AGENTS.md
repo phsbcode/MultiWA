@@ -35,6 +35,7 @@ All `.md` files in `docs/` covering:
 - `stage-2b2a-results.md` records the candidate identity, seven-route mutation matrix, zero-denied-write evidence and Astra stop point.
 - `stage-2b2b-conversation-detail-handoff-2026-09-07.md` bounds the next batch to conversation-detail ownership, message-limit validation and isolated acceptance before Astra review.
 - `stage-2b2b-results.md` records conversation-detail ownership, strict limit behavior, isolated evidence and the Astra review stop point.
+- `stage-2b2c-message-access-handoff-2026-09-07.md` bounds message reads, cursor containment and local deletion ownership before isolated acceptance and Astra review.
 
 ## Verification
 

@@ -437,13 +437,12 @@ export class MessagesService {
     const where: any = { conversationId };
     
     if (options.before) {
-      const beforeMsg = await prisma.message.findUnique({ 
-        where: { id: options.before },
+      const beforeMsg = await prisma.message.findFirst({
+        where: { id: options.before, conversationId },
         select: { timestamp: true },
       });
-      if (beforeMsg) {
-        where.timestamp = { lt: beforeMsg.timestamp };
-      }
+      if (!beforeMsg) throw new NotFoundException('Pagination cursor not found.');
+      where.timestamp = { lt: beforeMsg.timestamp };
     }
 
     const messages = await prisma.message.findMany({

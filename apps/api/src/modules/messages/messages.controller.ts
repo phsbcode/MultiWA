@@ -211,6 +211,7 @@ export class MessagesController {
 
   // Get messages by conversation
   @Get('conversation/:conversationId')
+  @RequireTenant({ resource: 'conversation', from: 'param', key: 'conversationId' })
   @ApiOperation({ summary: 'Get messages by conversation' })
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'before', required: false, description: 'Get messages before this ID' })
@@ -224,6 +225,7 @@ export class MessagesController {
 
   // Get single message
   @Get(':id')
+  @RequireTenant({ resource: 'message', from: 'param', key: 'id' })
   @ApiOperation({ summary: 'Get message by ID' })
   async findOne(@Param('id') id: string) {
     return this.service.findOne(id);
@@ -231,6 +233,7 @@ export class MessagesController {
 
   // Delete message (from local database)
   @Delete(':id')
+  @RequireTenant({ resource: 'message', from: 'param', key: 'id' })
   @ApiOperation({ summary: 'Delete message from database' })
   async delete(@Param('id') id: string) {
     return this.service.delete(id);

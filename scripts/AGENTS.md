@@ -27,6 +27,7 @@ Utility scripts for development, code review, API contract validation, and CI/CD
 - `api-routes.snapshot.json` is the source of truth for route validation
 - Authorization inventory updates are drafts until selector, evidence and status fields are reviewed; its checker must keep known gaps visible.
 - Mutation characterization must compare complete records from both synthetic organizations immediately before and after each denied request.
+- Authorization inventory supports explicit profile, conversation and message tenant resources; the message resource must verify both organization ownership and conversation-parent consistency.
 
 ## Work Guidance
 
