@@ -23,7 +23,10 @@ import type {
   SendMessageOptions,
 } from '../types';
 import { normalizeBaileysPresenceUpdate } from '../presence';
-import { shouldHandleBaileysDisconnect } from './baileys-lifecycle';
+import {
+  normalizeBaileysDisconnectReason,
+  shouldHandleBaileysDisconnect,
+} from './baileys-lifecycle';
 import {
   isBaileysProtocolMessage,
   normalizeBaileysEditedMessage,
@@ -81,14 +84,20 @@ export class BaileysAdapter implements IWhatsAppEngine {
     return this.phoneNumberShares.get(value) || value;
   }
 
-  private async rememberPhoneNumberShare(lid: string | null | undefined, phoneJid: string | null | undefined) {
-    if (!lid?.endsWith('@lid') || !/^\d{7,15}@s\.whatsapp\.net$/i.test(phoneJid || '')) return;
-    if (this.phoneNumberShares.get(lid) === phoneJid) return;
-    this.phoneNumberShares.set(lid, phoneJid!);
-    await this.config?.onPhoneNumberShare?.({ lid, jid: phoneJid! });
+  private normalizedPhoneJid(value: string | null | undefined): string | undefined {
+    const match = String(value || '').match(/^(\d{7,15})(?::\d+)?@s\.whatsapp\.net$/i);
+    return match ? `${match[1]}@s.whatsapp.net` : undefined;
   }
 
-  async resolvePhoneJids(jids: string[]): Promise<Record<string, string>> {
+  private async rememberPhoneNumberShare(lid: string | null | undefined, phoneJid: string | null | undefined) {
+    const normalized = this.normalizedPhoneJid(phoneJid);
+    if (!lid?.endsWith('@lid') || !normalized) return;
+    if (this.phoneNumberShares.get(lid) === normalized) return;
+    this.phoneNumberShares.set(lid, normalized);
+    await this.config?.onPhoneNumberShare?.({ lid, jid: normalized });
+  }
+
+  async resolvePhoneJids(jids: string[], groupJid?: string): Promise<Record<string, string>> {
     const unique = [...new Set(jids.filter(value => value.toLowerCase().slice(-4) === '@' + 'lid'))];
     const resolved: Record<string, string> = {};
     for (const jid of unique) {
@@ -96,16 +105,17 @@ export class BaileysAdapter implements IWhatsAppEngine {
       if (cached) resolved[jid] = cached;
     }
     let missing = unique.filter(jid => !resolved[jid]);
-    if (missing.length && this.authState?.keys?.get) {
+    const persistedKeys = this.authState?.state?.keys || this.authState?.keys;
+    if (missing.length && persistedKeys?.get) {
       const reverseKeys = missing.map(jid => `${jid.split('@')[0].split(':')[0]}_reverse`);
-      const stored = await this.authState.keys.get('lid-mapping', reverseKeys);
+      const stored = await persistedKeys.get('lid-mapping', reverseKeys);
       for (const jid of missing) {
         const user = jid.split('@')[0].split(':')[0];
         const phone = stored[`${user}_reverse`];
         if (typeof phone === 'string' && /^\d{7,15}$/.test(phone)) {
           const phoneJid = `${phone}@s.whatsapp.net`;
           resolved[jid] = phoneJid;
-          this.phoneNumberShares.set(jid, phoneJid);
+          await this.rememberPhoneNumberShare(jid, phoneJid);
         }
       }
     }
@@ -114,25 +124,31 @@ export class BaileysAdapter implements IWhatsAppEngine {
     if (missing.length && lidMapping?.getPNsForLIDs) {
       const mappings = await lidMapping.getPNsForLIDs(missing);
       for (const mapping of mappings || []) {
-        if (mapping?.lid && mapping?.pn) {
-          resolved[mapping.lid] = mapping.pn;
-          this.phoneNumberShares.set(mapping.lid, mapping.pn);
+        const phoneJid = this.normalizedPhoneJid(mapping?.pn);
+        if (mapping?.lid && phoneJid) {
+          resolved[mapping.lid] = phoneJid;
+          await this.rememberPhoneNumberShare(mapping.lid, phoneJid);
         }
       }
     }
     missing = unique.filter(jid => !resolved[jid]);
-    if (missing.length && this.socket?.groupFetchAllParticipating) {
+    if (missing.length && (this.socket?.groupMetadata || this.socket?.groupFetchAllParticipating)) {
       try {
-        const groups = await this.socket.groupFetchAllParticipating();
+        let groups: Record<string, any> = {};
+        if (groupJid?.endsWith('@g.us') && this.socket.groupMetadata) {
+          groups[groupJid] = await this.socket.groupMetadata(groupJid);
+        } else if (this.socket.groupFetchAllParticipating) {
+          groups = await this.socket.groupFetchAllParticipating();
+        }
         for (const group of Object.values(groups || {}) as any[]) {
           for (const participant of group.participants || []) {
             const lid = String(participant.lid ||
               (String(participant.id || '').endsWith('@lid') ? participant.id : ''));
-            const phoneJid = String(participant.phoneNumber ||
+            const phoneJid = this.normalizedPhoneJid(participant.phoneNumber || participant.pn ||
               (String(participant.id || '').endsWith('@s.whatsapp.net') ? participant.id : ''));
-            if (missing.includes(lid) && /^\d{7,15}@s\.whatsapp\.net$/i.test(phoneJid)) {
+            if (missing.includes(lid) && phoneJid) {
               resolved[lid] = phoneJid;
-              this.phoneNumberShares.set(lid, phoneJid);
+              await this.rememberPhoneNumberShare(lid, phoneJid);
             }
           }
         }
@@ -150,13 +166,26 @@ export class BaileysAdapter implements IWhatsAppEngine {
     if (!message.message || message.key.fromMe || isBaileysProtocolMessage(message.message)) return;
     this.rememberMessage(message);
     const inbound = normalizeBaileysInbound(message.message);
-    const remoteJid = this.canonicalJid(message.key.remoteJid);
     const keyWithAlt = message.key as proto.IMessageKey & {
       participantAlt?: string | null;
       remoteJidAlt?: string | null;
     };
     await this.rememberPhoneNumberShare(message.key.participant, keyWithAlt.participantAlt);
     await this.rememberPhoneNumberShare(message.key.remoteJid, keyWithAlt.remoteJidAlt);
+    const unresolved = [message.key.participant, message.key.remoteJid].filter(
+      (jid): jid is string => Boolean(jid?.endsWith('@lid') && !this.phoneNumberShares.has(jid)),
+    );
+    if (unresolved.length) {
+      try {
+        await this.resolvePhoneJids(
+          unresolved,
+          message.key.remoteJid?.endsWith('@g.us') ? message.key.remoteJid : undefined,
+        );
+      } catch (error) {
+        console.warn(`[Baileys] Sender phone lookup failed; retaining the provider identity: ${(error as Error).message}`);
+      }
+    }
+    const remoteJid = this.canonicalJid(message.key.remoteJid);
     const participant = this.canonicalJid(message.key.participant) ||
       this.canonicalJid(keyWithAlt.participantAlt);
     await this.config?.onMessage?.({
@@ -240,13 +269,27 @@ export class BaileysAdapter implements IWhatsAppEngine {
         if (!shouldHandleBaileysDisconnect(this.isDestroying)) return;
         const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
         const isLoggedOut = statusCode === DisconnectReason.loggedOut;
-        const isConnectionFailure = lastDisconnect?.error?.message?.includes('Connection Failure');
+        const disconnectReason = normalizeBaileysDisconnectReason(
+          isLoggedOut,
+          lastDisconnect?.error?.message,
+        );
+        const isConnectionFailure = disconnectReason.includes('Connection Failure');
 
         console.log(
           `[Baileys] Connection closed for profile ${this.config?.profileId}. StatusCode: ${statusCode}, Retry count: ${this.connectionRetryCount}`
         );
 
         this.status = { isConnected: false, isAuthenticated: false };
+
+        // A 401 is Baileys' logged-out signal. Treating its generic
+        // "Connection Failure" message as temporary recreates the adapter
+        // with the same rejected credentials forever, so a fresh QR is never
+        // emitted. EngineManager owns credential cleanup for "Logged Out".
+        if (isLoggedOut) {
+          this.connectionRetryCount = 0;
+          this.config?.onDisconnected?.(disconnectReason);
+          return;
+        }
 
         // Check if session might be stale (multiple connection failures)
         if (isConnectionFailure) {
@@ -279,9 +322,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
           this.connectionRetryCount = 0;
         }
 
-        this.config?.onDisconnected?.(
-          lastDisconnect?.error?.message || 'Connection closed'
-        );
+        this.config?.onDisconnected?.(disconnectReason);
 
         // EngineManager owns retry/backoff. Keeping a second reconnect loop in
         // the adapter creates overlapping sockets and rapidly invalidates QRs.
@@ -315,8 +356,9 @@ export class BaileysAdapter implements IWhatsAppEngine {
     });
 
     this.socket.ev.on('lid-mapping.update', ({ lid, pn }) => {
-      this.phoneNumberShares.set(lid, pn);
-      this.config?.onPhoneNumberShare?.({ lid, jid: pn });
+      void this.rememberPhoneNumberShare(lid, pn).catch(error => {
+        console.warn(`[Baileys] Failed to retain a phone-number mapping: ${(error as Error).message}`);
+      });
     });
 
     this.socket.ev.on('messaging-history.set', async ({ messages }) => {
