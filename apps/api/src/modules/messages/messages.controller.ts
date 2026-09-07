@@ -218,10 +218,13 @@ export class MessagesController {
   @ApiQuery({ name: 'before', required: false, description: 'Get messages before this ID' })
   async findByConversation(
     @Param('conversationId') conversationId: string,
-    @Query('limit', new ConversationMessagesLimitPipe()) limit?: number,
+    @Query('limit', new ConversationMessagesLimitPipe()) limit?: unknown,
     @Query('before') before?: string,
   ) {
-    return this.service.findByConversation(conversationId, { limit, before });
+    return this.service.findByConversation(conversationId, {
+      limit: limit as number | undefined,
+      before,
+    });
   }
 
   // Get single message

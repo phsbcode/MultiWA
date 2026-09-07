@@ -117,6 +117,18 @@ describe('MessagesController routed local access authorization', () => {
     });
   });
 
+  it('rejects a non-integer conversation limit before service execution', async () => {
+    vi.mocked(prisma.conversation.findFirst).mockResolvedValueOnce({ id: 'conversation-a' } as any);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v1/messages/conversation/conversation-a?limit=word',
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(service.findByConversation).not.toHaveBeenCalled();
+  });
+
   it.each(['findOne', 'delete'])('blocks inconsistent message parentage for %s', async handler => {
     vi.mocked(prisma.message.findFirst).mockResolvedValueOnce({ id: 'message-a',
       profileId: 'profile-a', conversation: { profileId: 'profile-b' } } as any);
