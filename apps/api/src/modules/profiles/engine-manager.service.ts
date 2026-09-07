@@ -21,6 +21,7 @@ import {
 } from './message-type-filter';
 import { resolveSenderIdentity } from './sender-identity';
 import { resolveProfileEngineType } from './profile-engine';
+import { applyMessageAck } from '../messages/ack-status';
 
 
 interface EngineInstance {
@@ -1003,23 +1004,18 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         }
       },
       onMessageAck: async (messageId: string, status: string) => {
-        this.logger.log(`[ACK] Message ${messageId} → status: ${status}`);
         try {
-          // The engine adapter already maps numeric ack to string status
-          // (pending, sent, delivered, read, played)
-          // No need for double-mapping
-          
-          const updated = await prisma.message.updateMany({
-            where: { messageId },
-            data: { status },
-          });
-
-          this.logger.log(`[ACK] Updated ${updated.count} message(s) for ${messageId} → ${status}`);
+          const result = await applyMessageAck(profileId, messageId, status);
+          if (result.applied === false) {
+            this.logger.warn(`[ACK] Ignored acknowledgement: ${result.reason}`);
+            return;
+          }
+          this.logger.log(`[ACK] Updated ${result.count} message(s) to ${result.status}`);
 
           // Emit WebSocket event for real-time UI updates
           this.eventsGateway.emitMessageAck(profileId, messageId, status);
         } catch (error) {
-          this.logger.warn(`Failed to update message ack: ${(error as Error).message}`);
+          this.logger.warn('Failed to update message acknowledgement after bounded retries');
         }
       },
       onPresenceUpdate: async presence => {

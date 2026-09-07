@@ -59,6 +59,7 @@ describe('EngineManagerService engine selection', () => {
     engine.connect.mockResolvedValue(undefined);
     engine.destroy.mockResolvedValue(undefined);
     vi.mocked(prisma.profile.update).mockResolvedValue({} as any);
+    vi.mocked(prisma.message.updateMany).mockResolvedValue({ count: 1 } as any);
     service = new EngineManagerService(
       eventsGateway as any,
       { processMessage: vi.fn() } as any,
@@ -163,6 +164,39 @@ describe('EngineManagerService engine selection', () => {
       conversationId: 'group-conversation',
       chatJid: '120363000000000000@g.us',
     }));
+  });
+
+  it('ignores an acknowledgement without a provider message id', async () => {
+    vi.mocked(prisma.profile.findUnique).mockResolvedValue({
+      id: 'profile-baileys',
+      settings: { engine: 'baileys' },
+    } as any);
+
+    await service.connectProfile('profile-baileys');
+    const config = engine.initialize.mock.calls[0][0];
+    await config.onMessageAck('', 'read');
+
+    expect(prisma.message.updateMany).not.toHaveBeenCalled();
+    expect(eventsGateway.emitMessageAck).not.toHaveBeenCalled();
+  });
+
+  it('scopes a valid acknowledgement to its active profile', async () => {
+    vi.mocked(prisma.profile.findUnique).mockResolvedValue({
+      id: 'profile-baileys',
+      settings: { engine: 'baileys' },
+    } as any);
+
+    await service.connectProfile('profile-baileys');
+    const config = engine.initialize.mock.calls[0][0];
+    await config.onMessageAck('provider-message', 'delivered');
+
+    expect(prisma.message.updateMany).toHaveBeenCalledWith({
+      where: { profileId: 'profile-baileys', messageId: 'provider-message' },
+      data: { status: 'delivered' },
+    });
+    expect(eventsGateway.emitMessageAck).toHaveBeenCalledWith(
+      'profile-baileys', 'provider-message', 'delivered',
+    );
   });
 
   it('persists replayed history once without firing live-message side effects', async () => {
