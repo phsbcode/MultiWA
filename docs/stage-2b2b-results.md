@@ -8,9 +8,10 @@ Isolated fixture correction commit:
 Candidate image: `multiwa-api:stage2b2b-00512fa`, image ID
 `sha256:d45b317a3e7f76339ac76150c01c7d3563b62ee541d46eb0ce01b6111a274ac4`.
 
-Live remains on Batch 2B.2A image
-`sha256:faf91b6f31717dc0c8c73d11168c95623ec7e93e9eab58c19653e15240183bc4`.
-Batch 2B.2B has not been merged or deployed.
+PR 8 merged to `main` as `79b25f0fbea4c42ce253d8e37699344c7e9454df`.
+Live runs the candidate image above from 7 September 2026. The previous Batch
+2B.2A image `sha256:faf91b6f31717dc0c8c73d11168c95623ec7e93e9eab58c19653e15240183bc4`
+is retained as the rollback image.
 
 ## Change
 
@@ -76,6 +77,15 @@ The characterization kept the full Batch 2B.1 read checks and Batch 2B.2A's
   decision. Exactly one route moved from gap to protected.
 - Public-boundary, API-contract, inventory and repository release checks: passed.
 - Isolated real HTTP characterization: passed.
+- Live API-key reads: profiles, conversation list, default detail and detail limits
+  1 and 100 returned 200. Default and limit-100 messages were chronological and
+  stayed within their bounds; exponent notation returned 400 and missing
+  credentials returned 401.
+- Authenticated staff `/exec`: queue and a normal review drawer loaded. A protected
+  PDF completed its first-page render on desktop and remained decoded at 390 by
+  844 pixels. The expand control was visible, neither layout overflowed, no fallback
+  appeared and browser errors were zero. Queue startup took 24.30 seconds and the
+  selected preview took 6.50 seconds.
 
 The first two Docker builds exhausted disk while Puppeteer unpacked and produced no
 candidate. The successful build followed cleanup of regenerable caches and old
@@ -102,14 +112,19 @@ The guard-to-service ownership race during concurrent profile reassignment remai
 outside this batch. Message timestamp ties retain the existing database ordering.
 No cursor pagination or response redaction was added.
 
-No rollback is needed before release because this candidate is not live. A later
-authorized release can restore the current Batch 2B.2A image above and recreate
-only the Compose API service with `--no-deps --no-build`.
+Rollback by tagging the retained Batch 2B.2A image above as
+`multiwa-api:latest`, then run:
 
-## Astra review handoff
+```bash
+docker compose -p multiwa -f /home/hermes/MultiWA/docker-compose.yml \
+  up -d --no-deps --no-build --force-recreate api
+```
 
-Review `00512fa` and `abe1368`, plus the documentation follow-up. Check guard order,
-the exact decorator, explicit query pipe, routed service-spy tests, all inventory
-mutations and the 45-request detail matrix. Re-run the isolated command above and
-confirm the 88-request mutation matrix plus four known gaps remain. Do not merge or
-deploy during review.
+Verify API, PostgreSQL and Redis health, direct authenticated detail reads and the
+Payment Monitor queue, normal drawer and decoded preview after recovery.
+
+## Astra review result
+
+Astra independently reran the strict pipe, inventory and isolated acceptance. It
+confirmed the 45-request detail matrix, retained 88-request mutation matrix and four
+known gaps, and found no release-blocking issue.
