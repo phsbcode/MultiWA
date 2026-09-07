@@ -45,6 +45,40 @@ describe('ConversationsService', () => {
     service = new ConversationsService(groupsService as any);
   });
 
+  it('scopes a pagination cursor to the authorized conversation', async () => {
+    vi.mocked(prisma.message.findFirst).mockResolvedValueOnce({
+      timestamp: new Date('2026-09-07T01:00:00Z'),
+    } as any);
+    vi.mocked(prisma.message.findMany).mockResolvedValueOnce([]);
+
+    await service.getMessages('conversation-a', { before: 'cursor-a', limit: 20 });
+
+    expect(prisma.message.findFirst).toHaveBeenCalledWith({
+      where: { id: 'cursor-a', conversationId: 'conversation-a' },
+      select: { timestamp: true },
+    });
+    expect(prisma.message.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { conversationId: 'conversation-a', timestamp: {
+        lt: new Date('2026-09-07T01:00:00Z'),
+      } },
+    }));
+  });
+
+  it.each([
+    ['another conversation in the same organization', 'same-org-cursor'],
+    ['a conversation in another organization', 'foreign-org-cursor'],
+  ])('rejects a pagination cursor from %s', async (_label, cursor) => {
+    vi.mocked(prisma.message.findFirst).mockResolvedValueOnce(null);
+
+    await expect(service.getMessages('conversation-a', { before: cursor, limit: 20 }))
+      .rejects.toThrow('Pagination cursor not found.');
+    expect(prisma.message.findFirst).toHaveBeenCalledWith({
+      where: { id: cursor, conversationId: 'conversation-a' },
+      select: { timestamp: true },
+    });
+    expect(prisma.message.findMany).not.toHaveBeenCalled();
+  });
+
   it('refreshes a stale group title in the background for the next conversation load', async () => {
     vi.mocked(prisma.$queryRawUnsafe)
       .mockResolvedValueOnce([{ conversationId: 'conv-group', id: 'msg-1' }] as any)

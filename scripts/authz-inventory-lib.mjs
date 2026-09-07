@@ -40,12 +40,147 @@ function joinRoute(prefix, route) {
     .replace(/\/{2,}/g, '/').replace(/\/$/, '') || '/';
 }
 
+function withoutComments(text) {
+  let result = '';
+  let quote = '';
+  for (let index = 0; index < text.length; index += 1) {
+    const current = text[index];
+    const next = text[index + 1];
+    if (quote) {
+      result += current;
+      if (current === '\\') result += text[++index] || '';
+      else if (current === quote) quote = '';
+      continue;
+    }
+    if (current === "'" || current === '"' || current === '`') {
+      quote = current;
+      result += current;
+      continue;
+    }
+    if (current === '/' && next === '/') {
+      result += '  ';
+      index += 2;
+      while (index < text.length && text[index] !== '\n') {
+        result += ' ';
+        index += 1;
+      }
+      if (index < text.length) result += '\n';
+      continue;
+    }
+    if (current === '/' && next === '*') {
+      result += '  ';
+      index += 2;
+      while (index < text.length && !(text[index] === '*' && text[index + 1] === '/')) {
+        result += text[index] === '\n' ? '\n' : ' ';
+        index += 1;
+      }
+      if (index < text.length) {
+        result += '  ';
+        index += 1;
+      }
+      continue;
+    }
+    result += current;
+  }
+  return result;
+}
+
 function guardNames(text) {
   const result = new Set();
-  for (const match of text.matchAll(/@UseGuards\(([^)]*)\)/g)) {
+  for (const match of withoutComments(text).matchAll(/@UseGuards\(([^)]*)\)/g)) {
     match[1].split(',').map(value => value.trim()).filter(Boolean).forEach(value => result.add(value));
   }
   return [...result];
+}
+
+const INVALID_TENANT_CHECK = Object.freeze({
+  resource: '', from: '', key: '', optional: null,
+});
+
+function tenantTokens(text) {
+  const tokens = [];
+  for (let index = 0; index < text.length;) {
+    const current = text[index];
+    if (/\s/.test(current)) {
+      index += 1;
+      continue;
+    }
+    if (current === "'" || current === '"') {
+      const quote = current;
+      let value = '';
+      let valid = true;
+      index += 1;
+      while (index < text.length && text[index] !== quote) {
+        if (text[index] === '\\') valid = false;
+        value += text[index];
+        index += 1;
+      }
+      if (index >= text.length) return null;
+      tokens.push({ type: valid ? 'string' : 'unsupported', value });
+      index += 1;
+      continue;
+    }
+    const identifier = text.slice(index).match(/^[A-Za-z_$][\w$]*/)?.[0];
+    if (identifier) {
+      tokens.push({ type: 'identifier', value: identifier });
+      index += identifier.length;
+      continue;
+    }
+    tokens.push({ type: 'punctuation', value: current });
+    index += 1;
+  }
+  return tokens;
+}
+
+function parseTenantArguments(text) {
+  const tokens = tenantTokens(text);
+  if (!tokens) return [INVALID_TENANT_CHECK];
+  let position = 0;
+  const checks = [];
+  const take = value => tokens[position]?.value === value && tokens[position++];
+  while (position < tokens.length) {
+    if (!take('{')) return [INVALID_TENANT_CHECK];
+    const fields = new Map();
+    let valid = true;
+    while (position < tokens.length && tokens[position].value !== '}') {
+      const name = tokens[position++];
+      if (!['identifier', 'string'].includes(name?.type) || fields.has(name.value) || !take(':')) {
+        valid = false;
+        break;
+      }
+      const value = tokens[position++];
+      if (!value || !['resource', 'from', 'key', 'optional'].includes(name.value)) {
+        valid = false;
+        break;
+      }
+      if (name.value === 'optional') {
+        if (value.type !== 'identifier' || !['true', 'false'].includes(value.value)) valid = false;
+        else fields.set(name.value, value.value === 'true');
+      } else if (value.type !== 'string') valid = false;
+      else fields.set(name.value, value.value);
+      if (!valid || (tokens[position]?.value !== ',' && tokens[position]?.value !== '}')) {
+        valid = false;
+        break;
+      }
+      if (tokens[position]?.value === ',') position += 1;
+    }
+    if (!valid || !take('}') || !fields.has('resource') || !fields.has('from') || !fields.has('key')) {
+      return [INVALID_TENANT_CHECK];
+    }
+    checks.push({ resource: fields.get('resource'), from: fields.get('from'),
+      key: fields.get('key'), optional: fields.get('optional') ?? false });
+    if (position === tokens.length) break;
+    if (!take(',') || position === tokens.length) return [INVALID_TENANT_CHECK];
+  }
+  return checks.length ? checks : [INVALID_TENANT_CHECK];
+}
+
+function tenantChecks(text) {
+  const result = [];
+  for (const call of withoutComments(text).matchAll(/@RequireTenant\(([\s\S]*?)\)/g)) {
+    result.push(...parseTenantArguments(call[1]));
+  }
+  return result;
 }
 
 function methodDetails(source, routeEnd, nextRouteIndex) {
@@ -270,6 +405,7 @@ export function discoverControllerRoutes(root) {
       const decoratorStart = Math.max(classStart, previousMethodEnd < 0 ? classStart : previousMethodEnd + 4);
       const decoratorText = source.slice(decoratorStart, details.methodIndex);
       const methodGuards = guardNames(decoratorText);
+      const ownershipChecks = tenantChecks(decoratorText);
       const route = { method: match[1].toUpperCase(),
         path: joinRoute(controllerMatch[1] || '', match[2] || ''),
         source: relative, controller, handler: details.handler,
@@ -281,6 +417,7 @@ export function discoverControllerRoutes(root) {
       const service = serviceReference(root, file, source, details.block);
       routes.push({ key: `${route.method} ${route.path}`, ...route,
         principals: classification.principals, guards: classification.guards,
+        tenantChecks: ownershipChecks,
         implementedAccess: classification.implementedAccess,
         targetAccess: classification.targetAccess, status: classification.status,
         selectors: selectors(route.path, details.header, dtoFields),
@@ -300,25 +437,25 @@ export function supplementaryEntrypoints() {
   return [
     { key: 'STATIC /uploads/media/*', source: 'apps/api/src/main.ts', handler: '@fastify/static',
       principals: ['unauthenticated'], implementedAccess: 'public', targetAccess: 'organization',
-      status: 'decision-required', selectors: [{ location: 'path', name: '*', required: true,
+      status: 'decision-required', tenantChecks: [], selectors: [{ location: 'path', name: '*', required: true,
         namespace: 'storage-relative-path', parent: '' }], ownershipEvidence: [
         'apps/api/src/main.ts#fastify-static', 'Static media prefix has no controller guard.' ],
       sideEffect: 'read-media', proposedPermission: 'messages:read', clients: [], notes: '' },
     { key: 'GET /api/docs', source: 'apps/api/src/main.ts', handler: 'SwaggerModule.setup',
       principals: ['unauthenticated'], implementedAccess: 'public', targetAccess: 'public',
-      status: 'intentional-public', selectors: [], ownershipEvidence: [
+      status: 'intentional-public', tenantChecks: [], selectors: [], ownershipEvidence: [
         'apps/api/src/main.ts#SwaggerModule.setup', 'Public API documentation endpoint.' ],
       sideEffect: 'read', proposedPermission: 'public', clients: [], notes: '' },
     { key: 'SOCKET /ws (EventsGateway)', source: 'apps/api/src/modules/events/events.gateway.ts',
       handler: 'EventsGateway', principals: ['jwt', 'api-key'], implementedAccess: 'organization',
-      targetAccess: 'organization', status: 'protected', selectors: [{ location: 'message',
+      targetAccess: 'organization', status: 'protected', tenantChecks: [], selectors: [{ location: 'message',
         name: 'profileId', required: true, namespace: 'profile-id', parent: '' }],
       ownershipEvidence: ['apps/api/src/modules/events/events.gateway.ts#authenticate',
         'EventsGateway.handleJoin verifies profile workspace organization before joining a room.'],
       sideEffect: 'subscription', proposedPermission: 'profiles:read', clients: [], notes: '' },
     { key: 'SOCKET /ws (RealtimeGateway)', source: 'apps/api/src/modules/websocket/realtime.gateway.ts',
       handler: 'RealtimeGateway', principals: ['api-key'], implementedAccess: 'authenticated-user',
-      targetAccess: 'organization', status: 'confirmed-gap', selectors: [{ location: 'message',
+      targetAccess: 'organization', status: 'confirmed-gap', tenantChecks: [], selectors: [{ location: 'message',
         name: 'profileId', required: true, namespace: 'profile-id', parent: '' }],
       ownershipEvidence: ['apps/api/src/modules/websocket/realtime.gateway.ts#handleSubscribe',
         'Subscription stores the supplied profile ID without an organization ownership query.'],
@@ -354,6 +491,14 @@ export function validateInventory(root, inventory, discovered = discoverControll
       errors.push(`${entry.key}: ownership evidence missing`);
     }
     if (!Array.isArray(entry.selectors)) errors.push(`${entry.key}: selectors missing`);
+    if (!Array.isArray(entry.tenantChecks)) errors.push(`${entry.key}: tenantChecks missing`);
+    (entry.tenantChecks || []).forEach(check => {
+      if (!['profile', 'conversation'].includes(check.resource) ||
+          !['param', 'query', 'body'].includes(check.from) || !check.key ||
+          typeof check.optional !== 'boolean') {
+        errors.push(`${entry.key}: malformed tenant check`);
+      }
+    });
     (entry.selectors || []).forEach(selector => {
       if (!selector.location || !selector.name || !selector.namespace ||
           typeof selector.required !== 'boolean' || typeof selector.parent !== 'string') {
@@ -387,6 +532,8 @@ export function validateInventory(root, inventory, discovered = discoverControll
       errors.push(`route selector drift: ${key}`);
     } else if (JSON.stringify(actual.get(key).guards) !== JSON.stringify(route.guards)) {
       errors.push(`route guard drift: ${key}`);
+    } else if (JSON.stringify(actual.get(key).tenantChecks) !== JSON.stringify(route.tenantChecks)) {
+      errors.push(`route tenant-check drift: ${key}`);
     }
   }
   for (const key of actual.keys()) if (!expected.has(key)) errors.push(`stale inventory route: ${key}`);
