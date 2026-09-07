@@ -158,15 +158,16 @@ async function requestWithoutBusinessWrites({
   return response;
 }
 
-async function waitForStableBusinessState(organizationIds) {
-  let before = await organizationBusinessSnapshot(organizationIds);
-  for (let attempt = 0; attempt < 10; attempt++) {
-    await new Promise(resolve => setTimeout(resolve, 300));
-    const after = await organizationBusinessSnapshot(organizationIds);
-    if (JSON.stringify(after) === JSON.stringify(before)) return;
-    before = after;
+async function waitForTerminalMockAcknowledgements(messageIds) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const messages = await prisma.message.findMany({
+      where: { id: { in: messageIds } }, select: { id: true, status: true },
+    });
+    if (messages.length === messageIds.length &&
+        messages.every(message => message.status === 'read')) return;
+    await new Promise(resolve => setTimeout(resolve, 150));
   }
-  throw new Error('Synthetic provider acknowledgements did not settle.');
+  throw new Error('Synthetic provider acknowledgements did not reach terminal status.');
 }
 
 function routeWithForgedSelectors(path, profileId, organizationId) {
@@ -1086,6 +1087,7 @@ try {
   ];
   const directSendCredentials = [['jwt', jwtA], ['apiKey', readKey]];
   let directSendSuccessRequests = 0;
+  const connectedDirectSendMessageIds = [];
   for (const directCase of directSendCases) {
     for (const [credentialName, credential] of directSendCredentials) {
       for (const [profileLabel, profileId, connected] of [
@@ -1100,8 +1102,10 @@ try {
         assert.equal(response.status, 201, `${credentialName} ${profileLabel} ${directCase.name}`);
         assert.equal(response.value.success, true);
         assert.equal(response.value.status, connected ? 'sent' : 'pending');
-        if (connected) assert.match(response.value.waMessageId,
-          new RegExp(`^mock_${directCase.name}_`));
+        if (connected) {
+          assert.match(response.value.waMessageId, new RegExp(`^mock_${directCase.name}_`));
+          connectedDirectSendMessageIds.push(response.value.messageId);
+        }
         else assert.equal(response.value.warning, 'Profile not connected, message queued');
         const saved = await prisma.message.findUnique({
           where: { id: response.value.messageId }, include: { conversation: true },
@@ -1148,7 +1152,7 @@ try {
   };
   let directSendDeniedRequests = 0;
   const directSendOrganizationIds = [jwtA.organizationId, jwtB.organizationId];
-  await waitForStableBusinessState(directSendOrganizationIds);
+  await waitForTerminalMockAcknowledgements(connectedDirectSendMessageIds);
   for (const directCase of directSendCases) {
     const validBody = { to: `synthetic-denied-${directCase.name}-${suffix}@s.whatsapp.net`,
       ...directCase.body };
@@ -1191,6 +1195,14 @@ try {
       });
       directSendDeniedRequests++;
     }
+
+    await requestWithoutBusinessWrites({
+      method: 'POST', route: `/api/v1/messages/${directCase.name}`, credential: jwtA,
+      body: { profileId: profileA1 }, expectedStatus: 400,
+      label: `${directCase.name} owned invalid DTO`,
+      organizationIds: directSendOrganizationIds,
+    });
+    directSendDeniedRequests++;
 
     for (const [credentialName, credential] of [
       ['missing credential', null],

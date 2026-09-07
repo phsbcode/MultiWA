@@ -24,27 +24,36 @@ import { MessagesService } from './messages.service';
 const cases = [
   { handler: 'sendImage', type: 'image', engine: 'sendImage', dto: {
     profileId: 'profile-a', to: '0601 111 1101', base64: 'aGVsbG8=', caption: 'Synthetic image',
-  }, content: { base64: 'aGVsbG8=', caption: 'Synthetic image', mimetype: 'image/jpeg' } },
+  }, jid: '626011111101@s.whatsapp.net', engineContent: {
+    url: undefined, base64: 'aGVsbG8=', caption: 'Synthetic image', mimetype: 'image/jpeg' } },
   { handler: 'sendVideo', type: 'video', engine: 'sendVideo', dto: {
     profileId: 'profile-a', to: '0601 111 1102', base64: 'aGVsbG8=',
-  }, content: { base64: 'aGVsbG8=', mimetype: 'video/mp4' } },
+  }, jid: '626011111102@s.whatsapp.net', engineContent: {
+    url: undefined, base64: 'aGVsbG8=', caption: undefined, mimetype: 'video/mp4' } },
   { handler: 'sendAudio', type: 'audio', engine: 'sendAudio', dto: {
     profileId: 'profile-a', to: '0601 111 1103', base64: 'aGVsbG8=', ptt: true,
-  }, content: { base64: 'aGVsbG8=', mimetype: 'audio/mpeg', ptt: true } },
+  }, jid: '626011111103@s.whatsapp.net', engineContent: {
+    url: undefined, base64: 'aGVsbG8=', mimetype: 'audio/mpeg', ptt: true } },
   { handler: 'sendDocument', type: 'document', engine: 'sendDocument', dto: {
     profileId: 'profile-a', to: '0601 111 1104', base64: 'aGVsbG8=', filename: 'synthetic.pdf',
-  }, content: { base64: 'aGVsbG8=', filename: 'synthetic.pdf', mimetype: 'application/octet-stream' } },
+  }, jid: '626011111104@s.whatsapp.net', engineContent: {
+    url: undefined, base64: 'aGVsbG8=', filename: 'synthetic.pdf', caption: undefined,
+    mimetype: 'application/octet-stream' } },
   { handler: 'sendLocation', type: 'location', engine: 'sendLocation', dto: {
     profileId: 'profile-a', to: '0601 111 1105', latitude: 3.1, longitude: 101.7,
-  }, content: { latitude: 3.1, longitude: 101.7 } },
+  }, jid: '626011111105@s.whatsapp.net', engineContent: {
+    latitude: 3.1, longitude: 101.7, name: undefined, address: undefined } },
   { handler: 'sendContact', type: 'contact', engine: 'sendContact', dto: {
     profileId: 'profile-a', to: '0601 111 1106',
     contacts: [{ name: 'Synthetic Contact', phone: '60111111107' }],
-  }, content: { name: 'Synthetic Contact', phone: '60111111107' } },
+  }, jid: '626011111106@s.whatsapp.net', engineContent: {
+    contacts: [{ displayName: 'Synthetic Contact', vcard: 'BEGIN:VCARD\nVERSION:3.0\nFN:Synthetic Contact\nTEL;type=CELL;type=VOICE;waid=60111111107:60111111107\nEND:VCARD' }],
+    name: 'Synthetic Contact', phone: '60111111107' } },
   { handler: 'sendPoll', type: 'poll', engine: 'sendPoll', dto: {
     profileId: 'profile-a', to: '0601 111 1107', question: 'Synthetic choice?',
     options: ['One', 'Two'], allowMultipleAnswers: false,
-  }, content: { question: 'Synthetic choice?', options: ['One', 'Two'], allowMultipleAnswers: false } },
+  }, jid: '626011111107@s.whatsapp.net', engineContent: {
+    question: 'Synthetic choice?', options: ['One', 'Two'], allowMultipleAnswers: false } },
 ] as const;
 
 describe('MessagesService direct-send mapping', () => {
@@ -73,9 +82,10 @@ describe('MessagesService direct-send mapping', () => {
     expect(database.messageCreate).toHaveBeenCalledWith({ data: expect.objectContaining({
       profileId: 'profile-a', conversationId: 'conversation-a', type: value.type,
       direction: 'outgoing', status: 'pending',
-      content: expect.objectContaining(value.content),
+      content: value.engineContent,
     }) });
     expect(engine[value.engine]).toHaveBeenCalledOnce();
+    expect(engine[value.engine]).toHaveBeenCalledWith(value.jid, value.engineContent);
     for (const other of cases.map(item => item.engine).filter(name => name !== value.engine)) {
       expect(engine[other]).not.toHaveBeenCalled();
     }
@@ -90,8 +100,9 @@ describe('MessagesService direct-send mapping', () => {
       profileId: 'profile-a', to: '60111111999', base64: 'aGVsbG8=',
     });
 
-    expect(result).toMatchObject({ success: true, messageId: 'message-a',
-      conversationId: 'conversation-new', status: 'pending' });
+    expect(result).toEqual({ success: true, messageId: 'message-a',
+      conversationId: 'conversation-new', status: 'pending',
+      warning: 'Profile not connected, message queued' });
     expect(database.conversationCreate).toHaveBeenCalledOnce();
     expect(Object.values(engine).every(send => send.mock.calls.length === 0)).toBe(true);
   });

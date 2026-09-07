@@ -19,15 +19,17 @@ import { AuditService } from '../audit/audit.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { MessagesController } from './messages.controller';
 import { MessagesService } from './messages.service';
+import { SendAudioDto, SendContactDto, SendDocumentDto, SendImageDto,
+  SendLocationDto, SendPollDto, SendVideoDto } from './dto';
 
 const routes = [
-  { handler: 'sendImage', path: 'image', body: { profileId: 'profile-a', to: '60111111111', base64: 'aGVsbG8=' } },
-  { handler: 'sendVideo', path: 'video', body: { profileId: 'profile-a', to: '60111111112', base64: 'aGVsbG8=' } },
-  { handler: 'sendAudio', path: 'audio', body: { profileId: 'profile-a', to: '60111111113', base64: 'aGVsbG8=', ptt: true } },
-  { handler: 'sendDocument', path: 'document', body: { profileId: 'profile-a', to: '60111111114', base64: 'aGVsbG8=', filename: 'synthetic.pdf' } },
-  { handler: 'sendLocation', path: 'location', body: { profileId: 'profile-a', to: '60111111115', latitude: 3.1, longitude: 101.7 } },
-  { handler: 'sendContact', path: 'contact', body: { profileId: 'profile-a', to: '60111111116', contacts: [{ name: 'Synthetic Contact', phone: '60111111117' }] } },
-  { handler: 'sendPoll', path: 'poll', body: { profileId: 'profile-a', to: '60111111118', question: 'Synthetic choice?', options: ['One', 'Two'] } },
+  { handler: 'sendImage', path: 'image', dtoType: SendImageDto, body: { profileId: 'profile-a', to: '60111111111', base64: 'aGVsbG8=' } },
+  { handler: 'sendVideo', path: 'video', dtoType: SendVideoDto, body: { profileId: 'profile-a', to: '60111111112', base64: 'aGVsbG8=' } },
+  { handler: 'sendAudio', path: 'audio', dtoType: SendAudioDto, body: { profileId: 'profile-a', to: '60111111113', base64: 'aGVsbG8=', ptt: true } },
+  { handler: 'sendDocument', path: 'document', dtoType: SendDocumentDto, body: { profileId: 'profile-a', to: '60111111114', base64: 'aGVsbG8=', filename: 'synthetic.pdf' } },
+  { handler: 'sendLocation', path: 'location', dtoType: SendLocationDto, body: { profileId: 'profile-a', to: '60111111115', latitude: 3.1, longitude: 101.7 } },
+  { handler: 'sendContact', path: 'contact', dtoType: SendContactDto, body: { profileId: 'profile-a', to: '60111111116', contacts: [{ name: 'Synthetic Contact', phone: '60111111117' }] } },
+  { handler: 'sendPoll', path: 'poll', dtoType: SendPollDto, body: { profileId: 'profile-a', to: '60111111118', question: 'Synthetic choice?', options: ['One', 'Two'] } },
 ] as const;
 
 describe('MessagesController routed direct-send authorization', () => {
@@ -36,6 +38,10 @@ describe('MessagesController routed direct-send authorization', () => {
     Record<string, ReturnType<typeof vi.fn>>;
 
   beforeAll(async () => {
+    // Vitest's default transform omits decorator metadata. Restore the exact
+    // parameter metadata emitted by the production TypeScript build.
+    routes.forEach(route => Reflect.defineMetadata('design:paramtypes', [route.dtoType],
+      MessagesController.prototype, route.handler));
     const module = await Test.createTestingModule({
       controllers: [MessagesController],
       providers: [
@@ -74,6 +80,11 @@ describe('MessagesController routed direct-send authorization', () => {
     ]);
   });
 
+  it.each(routes)('retains production DTO metadata for $handler', route => {
+    expect(Reflect.getMetadata('design:paramtypes',
+      MessagesController.prototype, route.handler)).toEqual([route.dtoType]);
+  });
+
   it.each(routes)('blocks foreign $handler before DTO validation or service execution', async route => {
     vi.mocked(prisma.profile.findFirst).mockResolvedValueOnce(null);
     const response = await app.inject({
@@ -95,6 +106,16 @@ describe('MessagesController routed direct-send authorization', () => {
     expect(response.json()).toEqual({ success: true, status: 'sent' });
     expect(service[route.handler]).toHaveBeenCalledOnce();
     expect(service[route.handler]).toHaveBeenCalledWith(expect.objectContaining(route.body));
+  });
+
+  it.each(routes)('validates owned $handler payloads before service execution', async route => {
+    vi.mocked(prisma.profile.findFirst).mockResolvedValueOnce({ id: 'profile-a' } as any);
+    const response = await app.inject({
+      method: 'POST', url: `/api/v1/messages/${route.path}`,
+      payload: { profileId: 'profile-a' },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(service[route.handler]).not.toHaveBeenCalled();
   });
 
   it.each(routes)('rejects missing $handler profile before service execution', async route => {
