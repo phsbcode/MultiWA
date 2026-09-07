@@ -30,6 +30,7 @@ All `.md` files in `docs/` covering:
 - `upstream-sync-plan-2026-09-07.md` defines the staged selective upstream port, DNT compatibility checks and release checkpoints for the September 2026 synchronization work.
 - `stage-2a-authorization-handoff-2026-09-07.md` defines authorization inventory and characterization deliverables before Stage 2 enforcement changes.
 - `authorization-inventory.md` summarizes the checked route inventory and DNT compatibility boundaries; `stage-2a-results.md` records isolated baseline behavior and the Stage 2B backlog.
+- `stage-2b1-results.md` records Payment Monitor read-route enforcement and its isolated acceptance evidence.
 
 ## Verification
 

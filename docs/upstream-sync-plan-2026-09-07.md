@@ -75,6 +75,10 @@ protection from confirmed gaps. It does not change runtime authorization.
 Implementation evidence is recorded in `authorization-inventory.md` and
 `stage-2a-results.md`.
 
+Batch 2B.1 is implemented in `f9c2effd874acc4a8a9b1b9c70a56391c079589c`.
+It protects Payment Monitor read routes while preserving valid response contracts;
+acceptance evidence is recorded in `stage-2b1-results.md`.
+
 Upstream references: `54667f2`, `a96aaed`, `5917686`, `8c5c6fa`, `c320fff`,
 `dcc05cd`, `c403bd2`. Consult pinned upstream `common/tenant/` and
 `modules/auth/guards/api-key-scope.guard.ts`.

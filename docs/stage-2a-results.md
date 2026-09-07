@@ -96,6 +96,9 @@ media storage. The runner asserts expected baseline statuses, deletes its synthe
 organizations and disconnects Prisma. Hook and media fixtures remain isolated in
 the stopped test API container and contain no live data.
 
+This file preserves the pre-enforcement baseline. The characterization runner
+now tracks Batch 2B.1 expectations; see `stage-2b1-results.md` for current results.
+
 The prepared local environment can be rerun with
 `pnpm run test:authz-characterization:isolated`. It starts and stops only the
 preserved Stage 2A test containers and never mounts live sessions or credentials.

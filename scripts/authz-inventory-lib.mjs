@@ -201,7 +201,7 @@ function serviceReference(root, controllerFile, controllerSource, methodText) {
   return `${path.relative(root, candidate).replaceAll(path.sep, '/')}#${call[2]}`;
 }
 
-function classify(route, classGuards, methodGuards, methodText, classSource) {
+function classify(route, classGuards, methodGuards, methodText, classSource, decoratorText) {
   const guards = [...new Set([...classGuards, ...methodGuards])];
   const protectedByAuth = guards.some(value => /JwtAuthGuard|JwtOrApiKeyGuard/.test(value));
   const administrative = guards.some(value => /RolesGuard|RbacGuard/.test(value));
@@ -214,6 +214,9 @@ function classify(route, classGuards, methodGuards, methodText, classSource) {
   } else if (administrative) {
     implementedAccess = 'administrative';
     evidence = 'Method or class declares an administrative guard.';
+  } else if (/@RequireTenant\(/.test(decoratorText)) {
+    implementedAccess = 'organization';
+    evidence = 'Route declares a tenant resource selector enforced after authentication.';
   } else if (/organizationId|req\.user\.id|request\.user\.id|@Request\(\)/.test(methodText) &&
       /(organizationId|req\.user|request\.user)/.test(methodText)) {
     implementedAccess = 'organization';
@@ -272,7 +275,9 @@ export function discoverControllerRoutes(root) {
         source: relative, controller, handler: details.handler,
         excludedFromPublicSnapshot: /@ApiExcludeController\(\)/.test(classDecorators) ||
           /@ApiExcludeEndpoint\(\)/.test(decoratorText) };
-      const classification = classify(route, classGuards, methodGuards, details.block, classDecorators);
+      const classification = classify(
+        route, classGuards, methodGuards, details.block, classDecorators, decoratorText,
+      );
       const service = serviceReference(root, file, source, details.block);
       routes.push({ key: `${route.method} ${route.path}`, ...route,
         principals: classification.principals, guards: classification.guards,

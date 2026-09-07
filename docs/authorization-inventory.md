@@ -8,16 +8,16 @@ the gap. Later Stage 2 work must reduce those entries through behavior and tests
 
 ## Coverage
 
-Reviewed baseline: `21722ff6d2dddc752aaed9ed8d158589306326d9`.
+Reviewed baseline: `f9c2effd874acc4a8a9b1b9c70a56391c079589c`.
 
 - 232 controller routes found in source.
 - 231 routes in the public API snapshot.
 - One Swagger-excluded controller route: `GET /api/v1`.
 - Four supplementary entrypoints: static media, API docs and two `/ws` gateways.
 - 236 total inventory entries.
-- 57 entries have explicit protected evidence.
+- 63 entries have explicit protected evidence.
 - Eight are intentional public endpoints.
-- 167 have confirmed ownership/role gaps in source.
+- 161 have confirmed ownership/role gaps in source.
 - Four need an ownership decision, including three legacy hook routes.
 
 The high gap count is deliberate. A class-level authentication guard does not
@@ -42,12 +42,12 @@ side effect, proposed permission, source evidence and known DNT consumers.
 | Route group | Current result | Stage 2 requirement |
 | --- | --- | --- |
 | Profile status and DNT Operations profile routes | Organization-scoped; DNT flag requires exact boolean `true`. | Preserve response shapes and exact flag behavior. |
-| Profile message list | Authentication only; a foreign profile returned data in the isolated test. | Verify profile ownership before reading messages; retain scan filters and ordering. |
-| Profile media batch | Authentication only; a foreign profile/message returned media in the isolated test. | Verify profile ownership and every message ID belongs to that profile. Keep the 50-ID bound. |
-| Sender resolution | Authentication only and may persist recovered identity metadata. | Require profile ownership; decide whether the existing DNT key receives a dedicated capability or `messages:write`. |
-| Conversation list/message list | Authentication only for ordinary list/read paths. | Verify profile/conversation ownership and child containment. Preserve chronological context behavior. |
+| Profile message list | Organization ownership enforced for JWT and API keys. | Preserve scan filters, ordering and response fields. |
+| Profile media batch | Organization ownership enforced; every requested ID must belong to the selected profile or the request returns 404 without partial data. | Keep the 50-ID bound and request-order response behavior. |
+| Sender resolution | Organization ownership enforced and may persist recovered identity metadata. | Stage 2C must decide whether the DNT key receives a dedicated capability or `messages:write`. |
+| Conversation list/message list | Organization ownership enforced for profile list and conversation messages. | Preserve chronological behavior; detail and other routes remain in later batches. |
 | Conversation search/context | Current controller verifies profile organization; service verifies child containment. | Retain both checks and add guard-level regression coverage. |
-| Group list | Ordinary route is authentication only; DNT Operations route is organization-scoped. | Protect the ordinary route without weakening the DNT-specific path. |
+| Group list | Ordinary and DNT Operations routes enforce organization ownership; the DNT route retains its exact flag check. | Preserve provider response shape and exact DNT flag behavior. |
 | Legacy hooks | Authenticated global registry with no owner/profile field. | Complete the explicit hook ownership migration in Stage 2D. |
 
 Payment Monitor source confirms use of profile status, group list, conversation

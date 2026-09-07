@@ -55,7 +55,7 @@ async function apiKey(jwt, name, permissions) {
   return { type: 'api-key', value: response.value.key, id: response.value.id };
 }
 
-const report = { schemaVersion: 1, baseline: '21722ff6d2dddc752aaed9ed8d158589306326d9',
+const report = { schemaVersion: 1, baseline: 'f9c2effd874acc4a8a9b1b9c70a56391c079589c',
   observed: {}, knownGaps: [], protected: [], decisions: [] };
 
 try {
@@ -78,6 +78,16 @@ try {
     settings: { engine: 'baileys', dntOperationsAccess: false },
   } });
 
+  const conversationA1 = await prisma.conversation.create({ data: {
+    profileId: profileA1, jid: `synthetic-a1-${suffix}@s.whatsapp.net`, type: 'user',
+  } });
+  const messageA1 = await prisma.message.create({ data: {
+    profileId: profileA1, conversationId: conversationA1.id,
+    messageId: `provider-a1-${suffix}`, direction: 'incoming',
+    senderJid: `synthetic-a1-${suffix}@s.whatsapp.net`, type: 'image',
+    content: { url: 'data:image/png;base64,iVBORw0KGgo=', filename: 'synthetic-a1.png' },
+    timestamp: new Date(0),
+  } });
   const conversationA2 = await prisma.conversation.create({ data: {
     profileId: profileA2, jid: `synthetic-a2-${suffix}@s.whatsapp.net`, type: 'user',
   } });
@@ -117,26 +127,69 @@ try {
   report.observed.foreignProfile = foreignProfile.status;
   report.protected.push('Direct foreign profile lookup is denied with 404.');
 
+  const ownMessages = await request('GET',
+    `/api/v1/messages/profile/${profileA1}?includeMedia=false`, jwtA);
+  assert.equal(ownMessages.status, 200);
+  const ownMessage = ownMessages.value.find(item => item.id === messageA1.id);
+  assert.ok(ownMessage);
+  assert.equal(Object.hasOwn(ownMessage.content, 'url'), false);
+  assert.equal(typeof ownMessage.mediaFingerprint, 'string');
+  report.observed.sameOrganizationMessages = ownMessages.status;
+
+  const ownMedia = await request('POST', `/api/v1/messages/profile/${profileA1}/media`,
+    jwtA, { ids: [messageA1.id] });
+  assert.equal(ownMedia.status, 201);
+  assert.equal(ownMedia.value[0].id, messageA1.id);
+  assert.equal(ownMedia.value[0].content.filename, 'synthetic-a1.png');
+  report.observed.sameOrganizationMedia = ownMedia.status;
+
   const foreignMessages = await request('GET',
     `/api/v1/messages/profile/${profileB}?includeMedia=false`, jwtA);
-  assert.equal(foreignMessages.status, 200);
-  assert.ok(foreignMessages.value.some(item => item.id === messageB.id));
+  assert.equal(foreignMessages.status, 404);
   report.observed.foreignProfileMessages = foreignMessages.status;
-  report.knownGaps.push('Message profile reads accept a foreign organization profile ID.');
+  report.protected.push('Message profile reads reject a foreign organization profile ID.');
 
   const foreignMedia = await request('POST', `/api/v1/messages/profile/${profileB}/media`,
     jwtA, { ids: [messageB.id] });
-  assert.equal(foreignMedia.status, 201);
-  assert.equal(foreignMedia.value.length, 1);
+  assert.equal(foreignMedia.status, 404);
   report.observed.foreignProfileMedia = foreignMedia.status;
-  report.knownGaps.push('Bulk media retrieval accepts foreign organization profile and message IDs.');
+  report.protected.push('Bulk media retrieval rejects a foreign organization profile ID.');
+
+  const mixedMedia = await request('POST', `/api/v1/messages/profile/${profileA1}/media`,
+    jwtA, { ids: [messageA1.id, messageB.id] });
+  assert.equal(mixedMedia.status, 404);
+  report.observed.mixedProfileMedia = mixedMedia.status;
+  report.protected.push('Media batches reject mixed-profile IDs without returning a partial result.');
+
+  const foreignResolution = await request('POST',
+    `/api/v1/messages/profile/${profileB}/resolve-senders`, jwtA,
+    { jids: ['900000000000001@lid'] });
+  assert.equal(foreignResolution.status, 404);
+  report.observed.foreignSenderResolution = foreignResolution.status;
+  report.protected.push('Sender resolution rejects a foreign organization profile before service execution.');
 
   const foreignConversations = await request('GET',
     `/api/v1/conversations?profileId=${profileB}`, jwtA);
-  assert.equal(foreignConversations.status, 200);
-  assert.ok(foreignConversations.value.conversations.some(item => item.id === conversationB.id));
+  assert.equal(foreignConversations.status, 404);
   report.observed.foreignConversationList = foreignConversations.status;
-  report.knownGaps.push('Conversation listing accepts a foreign organization profile ID.');
+  report.protected.push('Conversation listing rejects a foreign organization profile ID.');
+
+  const ownConversationMessages = await request('GET',
+    `/api/v1/conversations/${conversationA1.id}/messages?limit=20`, jwtA);
+  assert.equal(ownConversationMessages.status, 200);
+  assert.ok(ownConversationMessages.value.messages.some(item => item.id === messageA1.id));
+  report.observed.sameOrganizationConversationMessages = ownConversationMessages.status;
+
+  const foreignConversationMessages = await request('GET',
+    `/api/v1/conversations/${conversationB.id}/messages?limit=20`, jwtA);
+  assert.equal(foreignConversationMessages.status, 404);
+  report.observed.foreignConversationMessages = foreignConversationMessages.status;
+  report.protected.push('Conversation message reads reject a foreign organization conversation ID.');
+
+  const foreignGroups = await request('GET', `/api/v1/groups/profile/${profileB}`, jwtA);
+  assert.equal(foreignGroups.status, 404);
+  report.observed.foreignGroupList = foreignGroups.status;
+  report.protected.push('Group listing rejects a foreign organization profile before provider access.');
 
   const foreignConversation = await request('GET',
     `/api/v1/conversations/${conversationB.id}?messageLimit=50`, jwtA);
@@ -176,6 +229,20 @@ try {
     assert.equal(response.status, 200);
     report.observed[name + 'KeyRead'] = response.status;
   }
+  for (const route of [
+    `/api/v1/messages/profile/${profileB}?includeMedia=false`,
+    `/api/v1/conversations?profileId=${profileB}`,
+    `/api/v1/conversations/${conversationB.id}/messages?limit=20`,
+    `/api/v1/groups/profile/${profileB}`,
+  ]) {
+    const response = await request('GET', route, readKey);
+    assert.equal(response.status, 404);
+  }
+  const apiKeyMedia = await request('POST', `/api/v1/messages/profile/${profileB}/media`,
+    readKey, { ids: [messageB.id] });
+  assert.equal(apiKeyMedia.status, 404);
+  report.observed.apiKeyForeignPaymentReads = 404;
+  report.protected.push('API-key Payment Monitor reads enforce the same organization boundaries as JWT reads.');
   report.decisions.push('Empty and wildcard permission sets currently retain full authenticated-key behavior.');
 
   const hook = await request('POST', '/api/v1/hooks', readKey, {
@@ -206,7 +273,7 @@ try {
   report.decisions.push('Profiles without a workspace are unreachable through organization-scoped profile lookup.');
   report.decisions.push('A missing principal organization cannot be constructed under the current required User.organizationId schema.');
 
-  assert.equal(report.knownGaps.length, process.env.AUTHZ_STATIC_FIXTURE === '1' ? 8 : 7);
+  assert.equal(report.knownGaps.length, process.env.AUTHZ_STATIC_FIXTURE === '1' ? 5 : 4);
   console.log(JSON.stringify(report, null, 2));
 } finally {
   if (organizations.length) {
