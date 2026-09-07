@@ -43,6 +43,12 @@ Do not claim an independent review unless it actually occurred.
 
 ## Stage 1: prevent broad acknowledgement writes
 
+Implemented in `2d51359` and released on 7 September 2026 as image
+`6d3c4bc60849`. The release retained the existing live Baileys lifecycle
+behavior; the separately committed logout recovery remains outside this image.
+Acceptance used a disposable PostgreSQL instance with two profiles sharing one
+provider message ID. Only the selected profile changed.
+
 Upstream references: `fb811d1`, `494fb34`, `4a68c52`.
 
 Targets: API `modules/profiles/engine-manager.service.ts`, matching worker
