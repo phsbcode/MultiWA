@@ -55,7 +55,7 @@ async function apiKey(jwt, name, permissions) {
   return { type: 'api-key', value: response.value.key, id: response.value.id };
 }
 
-const report = { schemaVersion: 1, baseline: 'f9c2effd874acc4a8a9b1b9c70a56391c079589c',
+const report = { schemaVersion: 1, baseline: 'ebe8a71ba471c3b41297c78522eff08e0d6ddf07',
   observed: {}, knownGaps: [], protected: [], decisions: [] };
 
 try {

@@ -16,6 +16,16 @@ stop_test_services() {
 }
 trap stop_test_services EXIT
 
+require_tmpfs() {
+  container=$1
+  destination=$2
+  config=$(docker inspect --format "{{index .HostConfig.Tmpfs \"$destination\"}}" "$container")
+  [ -n "$config" ] || {
+    echo "Isolated storage is not a temporary filesystem: ${container}:${destination}" >&2
+    exit 1
+  }
+}
+
 if [ -n "${AUTHZ_EXPECTED_IMAGE_ID:-}" ] && [ "$image_id" != "$AUTHZ_EXPECTED_IMAGE_ID" ]; then
   echo 'Candidate image identity does not match AUTHZ_EXPECTED_IMAGE_ID.' >&2
   exit 1
@@ -33,11 +43,8 @@ if ! docker container inspect "$redis" >/dev/null 2>&1; then
   docker create --name "$redis" --network "$network" \
     --tmpfs /data:rw,noexec,nosuid,size=64m redis:7-alpine >/dev/null
 fi
-if [ "$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Type}}{{end}}{{end}}' "$database")" != tmpfs ] ||
-   [ "$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Type}}{{end}}{{end}}' "$redis")" != tmpfs ]; then
-  echo 'Authorization test database and Redis must use temporary filesystems.' >&2
-  exit 1
-fi
+require_tmpfs "$database" /var/lib/postgresql/data
+require_tmpfs "$redis" /data
 
 docker start "$database" "$redis" >/dev/null
 for _attempt in $(seq 1 30); do
@@ -69,8 +76,7 @@ if [ "$(docker inspect --format '{{.Image}}' "$api")" != "$image_id" ]; then
   exit 1
 fi
 for mount in /app/apps/api/data /app/apps/api/media /data/sessions; do
-  type=$(docker inspect --format "{{range .Mounts}}{{if eq .Destination \"$mount\"}}{{.Type}}{{end}}{{end}}" "$api")
-  [ "$type" = tmpfs ] || { echo "Isolated API storage is not temporary: $mount" >&2; exit 1; }
+  require_tmpfs "$api" "$mount"
 done
 docker start "$api" >/dev/null
 
@@ -100,5 +106,5 @@ docker run --rm --entrypoint node --network "$network" \
   -e AUTHZ_STATIC_FIXTURE=1 \
   -e AUTHZ_TEST_BASE_URL="http://${api}:3333" \
   -e DATABASE_URL="$database_url" \
-  -v "$PWD/scripts/authz-characterization.mjs:/app/scripts/authz-characterization.mjs:ro" \
-  -w /app "$image" scripts/authz-characterization.mjs
+  -v "$PWD/scripts/authz-characterization.mjs:/app/apps/api/authz-characterization.mjs:ro" \
+  -w /app/apps/api "$image" authz-characterization.mjs
