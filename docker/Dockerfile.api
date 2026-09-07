@@ -4,7 +4,7 @@ FROM node:20-slim AS builder
 WORKDIR /app
 
 # Install pnpm and git
-RUN apt-get update && apt-get install -y git && npm install -g pnpm
+RUN apt-get update && apt-get install -y git && npm install -g pnpm@9.15.0
 
 # Copy workspace files
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
@@ -73,7 +73,7 @@ RUN apt-get update && apt-get install -y \
   --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g pnpm
+RUN npm install -g pnpm@9.15.0
 
 # Copy built artifacts first (layer caching friendly)
 COPY --from=builder /app/apps/api/dist ./apps/api/dist

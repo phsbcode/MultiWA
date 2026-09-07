@@ -10,7 +10,7 @@ WORKDIR /app
 
 # Install system deps (git for baileys, chromium build deps)
 RUN apt-get update && apt-get install -y git && \
-    npm install -g pnpm && \
+    npm install -g pnpm@9.15.0 && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy workspace config first (cache layer)
@@ -71,7 +71,7 @@ RUN apt-get update && apt-get install -y \
       libasound2 libx11-xcb1 libxcb-dri3-0 libdrm2 libxcb1 libglib2.0-0 \
       libcairo2 libpango-1.0-0 libpangocairo-1.0-0 \
       git unzip wget --no-install-recommends && \
-    npm install -g pnpm && \
+    npm install -g pnpm@9.15.0 && \
     rm -rf /var/lib/apt/lists/*
 
 # Download Puppeteer's bundled Chromium (reliable, tested with puppeteer)

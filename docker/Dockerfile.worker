@@ -4,7 +4,7 @@ FROM node:20-slim AS builder
 WORKDIR /app
 
 # Install pnpm and git
-RUN apt-get update && apt-get install -y git && npm install -g pnpm
+RUN apt-get update && apt-get install -y git && npm install -g pnpm@9.15.0
 
 # Copy workspace files
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
@@ -48,7 +48,7 @@ FROM node:20-slim AS runner
 WORKDIR /app
 
 # Install pnpm and git (required for baileys dependency)
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/* && npm install -g pnpm
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/* && npm install -g pnpm@9.15.0
 
 # Copy workspace definition and lockfile
 COPY --from=builder /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
@@ -78,4 +78,3 @@ ENV SESSIONS_PATH=/data/sessions
 WORKDIR /app/apps/worker
 
 CMD ["node", "dist/main.js"]
-

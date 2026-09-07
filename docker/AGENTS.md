@@ -22,6 +22,7 @@ Also owns root-level:
 ## Local Contracts
 
 - Root `Dockerfile` builds `api` and `admin` targets from the monorepo
+- Dockerfiles install the repository-declared `pnpm@9.15.0`; unpinned package-manager installs can break reproducible CI builds.
 - Docker Compose uses environment variables from `.env.docker` or `.env`
 - The API host port is bound to `127.0.0.1`; public access must pass through the HTTPS reverse proxy
 - Caddy handles TLS and reverse proxy in production
