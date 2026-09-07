@@ -27,6 +27,7 @@ All `.md` files in `docs/` covering:
 - API changes must update `07-api-specification.md` first
 - Architecture changes should update `04-system-architecture.md` and `05-database-design.md`
 - New features should get a doc following the existing numbering scheme
+- `upstream-sync-plan-2026-09-07.md` defines the staged selective upstream port, DNT compatibility checks and release checkpoints for the September 2026 synchronization work.
 
 ## Verification
 
