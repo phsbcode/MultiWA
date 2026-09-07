@@ -1,7 +1,7 @@
 // MultiWA Gateway - Enhanced Messages Controller
 // apps/api/src/modules/messages/messages.controller.ts
 
-import { BadRequestException, Controller, Get, Post, Delete, Put, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Post, Delete, Put, Body, Param, Query, UseGuards, Req, ParseIntPipe } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { MessagesService } from './messages.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
@@ -217,7 +217,7 @@ export class MessagesController {
   @ApiQuery({ name: 'before', required: false, description: 'Get messages before this ID' })
   async findByConversation(
     @Param('conversationId') conversationId: string,
-    @Query('limit') limit?: number,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
     @Query('before') before?: string,
   ) {
     return this.service.findByConversation(conversationId, { limit, before });

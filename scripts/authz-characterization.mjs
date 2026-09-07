@@ -246,11 +246,11 @@ try {
     name: 'Synthetic access A1', type: 'user', metadata: { fixture: 'access-a1' },
     lastMessageAt: new Date(-200000),
   } });
-  const accessMessagesA1 = await Promise.all(Array.from({ length: 4 }, (_value, index) =>
+  const accessMessagesA1 = await Promise.all(Array.from({ length: 52 }, (_value, index) =>
     prisma.message.create({ data: {
       profileId: profileA1, conversationId: accessConversationA1.id,
-      messageId: `provider-access-a1-${index}-${suffix}`, direction: 'access-fixture',
-      senderJid: `synthetic-access-a1-${suffix}@s.whatsapp.net`, type: 'access-fixture',
+      messageId: `provider-access-a1-${index}-${suffix}`, direction: 'incoming',
+      senderJid: `synthetic-access-a1-${suffix}@s.whatsapp.net`, type: 'text',
       content: { text: `synthetic access A1 ${index}` }, status: 'delivered',
       metadata: { fixture: 'access-a1', index: index },
       timestamp: new Date(-500000 + index * 1000),
@@ -262,8 +262,8 @@ try {
   } });
   const accessMessageA2 = await prisma.message.create({ data: {
     profileId: profileA2, conversationId: accessConversationA2.id,
-    messageId: `provider-access-a2-${suffix}`, direction: 'access-fixture',
-    senderJid: `synthetic-access-a2-${suffix}@s.whatsapp.net`, type: 'access-fixture',
+    messageId: `provider-access-a2-${suffix}`, direction: 'incoming',
+    senderJid: `synthetic-access-a2-${suffix}@s.whatsapp.net`, type: 'text',
     content: { text: 'synthetic access A2' }, status: 'delivered',
     metadata: { fixture: 'access-a2' }, timestamp: new Date(-600000),
   } });
@@ -280,17 +280,17 @@ try {
   const accessMessagesB = await Promise.all(Array.from({ length: 2 }, (_value, index) =>
     prisma.message.create({ data: {
       profileId: profileB, conversationId: accessConversationB.id,
-      messageId: `provider-access-b-${index}-${suffix}`, direction: 'access-fixture',
-      senderJid: `synthetic-access-b-${suffix}@s.whatsapp.net`, type: 'access-fixture',
+      messageId: `provider-access-b-${index}-${suffix}`, direction: 'incoming',
+      senderJid: `synthetic-access-b-${suffix}@s.whatsapp.net`, type: 'text',
       content: { text: `synthetic access B ${index}` }, status: 'delivered',
       metadata: { fixture: 'access-b', index: index },
       timestamp: new Date(-700000 + index * 1000),
     } })));
   const inconsistentMessage = await prisma.message.create({ data: {
     profileId: profileA1, conversationId: accessConversationB.id,
-    messageId: `provider-access-inconsistent-${suffix}`, direction: 'access-fixture',
+    messageId: `provider-access-inconsistent-${suffix}`, direction: 'incoming',
     senderJid: `synthetic-access-inconsistent-${suffix}@s.whatsapp.net`,
-    type: 'access-fixture', content: { text: 'synthetic inconsistent parent' },
+    type: 'text', content: { text: 'synthetic inconsistent parent' },
     status: 'delivered', metadata: { fixture: 'access-inconsistent' },
     timestamp: new Date(-800000),
   } });
@@ -675,7 +675,7 @@ try {
       conversationIds: accessSnapshotIds,
     });
     assert.deepEqual(defaultConversationMessages.value,
-      { messages: expectedAccessMessages(accessMessagesA1), hasMore: false });
+      { messages: expectedAccessMessages(accessMessagesA1.slice(-50)), hasMore: true });
 
     const limitedConversationMessages = await requestWithoutConversationWrites({
       method: 'GET',
@@ -696,6 +696,15 @@ try {
     });
     assert.deepEqual(cursorConversationMessages.value,
       { messages: expectedAccessMessages(accessMessagesA1.slice(0, 2)), hasMore: true });
+
+    const populatedA2ConversationMessages = await requestWithoutConversationWrites({
+      method: 'GET', route: `/api/v1/messages/conversation/${accessConversationA2.id}`,
+      credential, expectedStatus: 200,
+      label: `${credentialName} populated A2 conversation messages`,
+      conversationIds: [accessConversationA2.id, accessConversationB.id],
+    });
+    assert.deepEqual(populatedA2ConversationMessages.value,
+      { messages: expectedAccessMessages([accessMessageA2]), hasMore: false });
 
     const emptyConversationMessages = await requestWithoutConversationWrites({
       method: 'GET', route: `/api/v1/messages/conversation/${accessEmptyA2.id}`,
@@ -800,8 +809,8 @@ try {
       const deleteTarget = await prisma.message.create({ data: {
         profileId: deleteProfileId, conversationId: deleteConversation.id,
         messageId: `provider-access-delete-${credentialName}-${profileLabel}-${suffix}`,
-        direction: 'access-fixture', senderJid: `synthetic-delete-${suffix}@s.whatsapp.net`,
-        type: 'access-fixture', content: { text: 'synthetic local delete target' },
+        direction: 'incoming', senderJid: `synthetic-delete-${suffix}@s.whatsapp.net`,
+        type: 'text', content: { text: 'synthetic local delete target' },
         status: 'delivered', metadata: { fixture: 'delete-target' },
         timestamp: new Date(-900000),
       } });

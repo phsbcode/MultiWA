@@ -11,6 +11,7 @@ vi.mock('@multiwa/database', () => ({
 import { prisma } from '@multiwa/database';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Reflector } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { MessagesController } from './messages.controller';
 import { MessagesService } from './messages.service';
@@ -56,6 +57,10 @@ describe('MessagesController routed local access authorization', () => {
     (module.get(MessagesController) as any).auditService = { log: vi.fn() };
     app = module.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
     app.setGlobalPrefix('api/v1');
+    app.useGlobalPipes(new ValidationPipe({
+      transform: true,
+      transformOptions: { enableImplicitConversion: true },
+    }));
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
   });
@@ -93,6 +98,23 @@ describe('MessagesController routed local access authorization', () => {
     expect(response.json()).toEqual(route.expected);
     expect(service[route.handler]).toHaveBeenCalledOnce();
     expect(service[route.handler]).toHaveBeenCalledWith(...route.args);
+  });
+
+  it('uses production query conversion for an explicit conversation limit', async () => {
+    vi.mocked(prisma.conversation.findFirst).mockResolvedValueOnce({ id: 'conversation-a' } as any);
+    service.findByConversation.mockResolvedValueOnce({ messages: [], hasMore: false });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v1/messages/conversation/conversation-a?limit=2&before=message-before',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(service.findByConversation).toHaveBeenCalledOnce();
+    expect(service.findByConversation).toHaveBeenCalledWith('conversation-a', {
+      limit: 2,
+      before: 'message-before',
+    });
   });
 
   it.each(['findOne', 'delete'])('blocks inconsistent message parentage for %s', async handler => {
