@@ -17,8 +17,9 @@ function fixture(t) {
 @UseGuards(JwtOrApiKeyGuard)
 export class SampleController {
   @Get(':id')
-  async find(@Param('id') id: string, @Query('profileId') profileId: string) {
-    return { id, profileId };
+  async find(@Param('id') id: string, @Query('profileId') profileId: string,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number) {
+    return { id, profileId, limit };
   }
 }`);
   const routes = discoverControllerRoutes(root);
@@ -35,7 +36,7 @@ test('accepts independently discovered route, handler, selectors and evidence', 
   const value = fixture(t);
   assert.equal(validate(value).length, 0);
   assert.deepEqual(value.routes[0].selectors.map(item => [item.location, item.name]),
-    [['path', 'id'], ['query', 'profileId']]);
+    [['path', 'id'], ['query', 'profileId'], ['query', 'limit']]);
 });
 
 test('detects a new source route and a stale deleted route', t => {

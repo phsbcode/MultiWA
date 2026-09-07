@@ -112,7 +112,7 @@ async function requestWithoutConversationWrites({
 }) {
   const before = await Promise.all(conversationIds.map(mutationSnapshot));
   const response = await request(method, route, credential, body);
-  assert.equal(response.status, expectedStatus, label);
+  assert.equal(response.status, expectedStatus, `${label}: ${JSON.stringify(response.value)}`);
   const after = await Promise.all(conversationIds.map(mutationSnapshot));
   assert.deepEqual(after, before, `${label} must not change either organization's records`);
   return response;
@@ -136,6 +136,8 @@ try {
   const profileA2 = await profile(jwtA, workspaceA, 'A2');
   const profileA3 = await profile(jwtA, workspaceA, 'A3');
   const profileB = await profile(jwtB, workspaceB, 'B');
+  const accessProfileA1 = await profile(jwtA, workspaceA, 'access A1');
+  const accessProfileA2 = await profile(jwtA, workspaceA, 'access A2');
 
   await prisma.profile.update({ where: { id: profileA1 }, data: {
     settings: { engine: 'mock', dntOperationsAccess: true },
@@ -242,13 +244,13 @@ try {
   } });
 
   const accessConversationA1 = await prisma.conversation.create({ data: {
-    profileId: profileA1, jid: `synthetic-access-a1-${suffix}@s.whatsapp.net`,
+    profileId: accessProfileA1, jid: `synthetic-access-a1-${suffix}@s.whatsapp.net`,
     name: 'Synthetic access A1', type: 'user', metadata: { fixture: 'access-a1' },
     lastMessageAt: new Date(-200000),
   } });
   const accessMessagesA1 = await Promise.all(Array.from({ length: 52 }, (_value, index) =>
     prisma.message.create({ data: {
-      profileId: profileA1, conversationId: accessConversationA1.id,
+      profileId: accessProfileA1, conversationId: accessConversationA1.id,
       messageId: `provider-access-a1-${index}-${suffix}`, direction: 'incoming',
       senderJid: `synthetic-access-a1-${suffix}@s.whatsapp.net`, type: 'text',
       content: { text: `synthetic access A1 ${index}` }, status: 'delivered',
@@ -256,19 +258,19 @@ try {
       timestamp: new Date(-500000 + index * 1000),
     } })));
   const accessConversationA2 = await prisma.conversation.create({ data: {
-    profileId: profileA2, jid: `synthetic-access-a2-${suffix}@s.whatsapp.net`,
+    profileId: accessProfileA2, jid: `synthetic-access-a2-${suffix}@s.whatsapp.net`,
     name: 'Synthetic access A2', type: 'user', metadata: { fixture: 'access-a2' },
     lastMessageAt: new Date(-300000),
   } });
   const accessMessageA2 = await prisma.message.create({ data: {
-    profileId: profileA2, conversationId: accessConversationA2.id,
+    profileId: accessProfileA2, conversationId: accessConversationA2.id,
     messageId: `provider-access-a2-${suffix}`, direction: 'incoming',
     senderJid: `synthetic-access-a2-${suffix}@s.whatsapp.net`, type: 'text',
     content: { text: 'synthetic access A2' }, status: 'delivered',
     metadata: { fixture: 'access-a2' }, timestamp: new Date(-600000),
   } });
   const accessEmptyA2 = await prisma.conversation.create({ data: {
-    profileId: profileA2, jid: `synthetic-access-empty-a2-${suffix}@s.whatsapp.net`,
+    profileId: accessProfileA2, jid: `synthetic-access-empty-a2-${suffix}@s.whatsapp.net`,
     name: 'Synthetic empty access A2', type: 'user',
     metadata: { fixture: 'access-empty-a2' },
   } });
@@ -287,7 +289,7 @@ try {
       timestamp: new Date(-700000 + index * 1000),
     } })));
   const inconsistentMessage = await prisma.message.create({ data: {
-    profileId: profileA1, conversationId: accessConversationB.id,
+    profileId: accessProfileA1, conversationId: accessConversationB.id,
     messageId: `provider-access-inconsistent-${suffix}`, direction: 'incoming',
     senderJid: `synthetic-access-inconsistent-${suffix}@s.whatsapp.net`,
     type: 'text', content: { text: 'synthetic inconsistent parent' },
@@ -803,8 +805,8 @@ try {
     assert.deepEqual(forgedMessage.value, foreignMessage.value);
 
     for (const [profileLabel, deleteProfileId, deleteConversation] of [
-      ['A1', profileA1, accessConversationA1],
-      ['A2', profileA2, accessConversationA2],
+      ['A1', accessProfileA1, accessConversationA1],
+      ['A2', accessProfileA2, accessConversationA2],
     ]) {
       const deleteTarget = await prisma.message.create({ data: {
         profileId: deleteProfileId, conversationId: deleteConversation.id,
