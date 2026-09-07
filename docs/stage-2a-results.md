@@ -53,13 +53,19 @@ Acceptance: two-organization JWT and API-key HTTP tests; foreign and mixed-paren
 IDs denied without partial response data; current DNT response fields, filtering,
 ordering and bounds unchanged.
 
-### Batch 2B.2: message and conversation mutations
+### Batch 2B.2A: conversation mutations
 
-Protect every send, schedule, delete, mark-read, archive, mute, pin and participant
-operation by the supplied profile/conversation/group and child IDs. Do not infer
-ownership from a WhatsApp JID. Validate quoted messages, cursors and scheduled IDs
-against the same parent. Address static media access through an authenticated or
-short-lived evidence route without breaking original-slip review.
+Completed in candidate `e9fad0c`: read, archive, unarchive, mute, pin,
+clear-messages and delete now require organization ownership of the selected
+conversation. See `stage-2b2a-results.md` for isolated acceptance evidence.
+
+### Remaining Batch 2B.2 work
+
+Protect send, schedule, message-delete and participant operations by the supplied
+profile, conversation, group and child IDs. Do not infer ownership from a WhatsApp
+JID. Validate quoted messages and scheduled IDs against the same parent. Address
+static media access through an authenticated or short-lived evidence route without
+breaking original-slip review.
 
 ### Batch 2B.3: remaining profile-owned resources
 
