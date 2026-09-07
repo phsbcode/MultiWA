@@ -13,7 +13,8 @@ const password = 'Synthetic-pass-123';
 const organizations = [];
 
 async function request(method, route, credential, body) {
-  const headers = { 'content-type': 'application/json' };
+  const headers = {};
+  if (body !== undefined) headers['content-type'] = 'application/json';
   if (credential?.type === 'jwt') headers.authorization = 'Bearer ' + credential.value;
   if (credential?.type === 'api-key') headers['x-api-key'] = credential.value;
   const response = await fetch(baseUrl + route, { method, headers,
@@ -53,6 +54,46 @@ async function apiKey(jwt, name, permissions) {
   const response = await request('POST', '/api/v1/api-keys', jwt, { name, permissions });
   assert.equal(response.status, 201);
   return { type: 'api-key', value: response.value.key, id: response.value.id };
+}
+
+async function mutationFixture(profileId, label) {
+  const conversation = await prisma.conversation.create({ data: {
+    profileId,
+    jid: `synthetic-mutation-${label}-${suffix}@s.whatsapp.net`,
+    type: 'user',
+    unreadCount: 2,
+    metadata: { seed: label },
+    lastMessageAt: new Date('2026-09-07T02:00:00Z'),
+  } });
+  const messages = await Promise.all(['one', 'two'].map((part, index) =>
+    prisma.message.create({ data: {
+      profileId,
+      conversationId: conversation.id,
+      messageId: `provider-mutation-${label}-${part}-${suffix}`,
+      direction: 'incoming',
+      senderJid: `synthetic-mutation-${label}-${suffix}@s.whatsapp.net`,
+      type: 'text',
+      content: { text: `synthetic ${label} ${part}` },
+      status: index === 0 ? 'delivered' : 'sent',
+      timestamp: new Date(`2026-09-07T02:0${index}:00Z`),
+    } })));
+  return { conversation, messages };
+}
+
+async function mutationSnapshot(conversationId) {
+  return {
+    conversation: await prisma.conversation.findUnique({ where: { id: conversationId },
+      select: { id: true, profileId: true, unreadCount: true, metadata: true,
+        lastMessageAt: true } }),
+    messages: await prisma.message.findMany({ where: { conversationId },
+      select: { id: true, status: true }, orderBy: { id: 'asc' } }),
+  };
+}
+
+function routeWithForgedSelectors(path, profileId, organizationId) {
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}profileId=${encodeURIComponent(profileId)}` +
+    `&organizationId=${encodeURIComponent(organizationId)}`;
 }
 
 const report = { schemaVersion: 1, baseline: 'ebe8a71ba471c3b41297c78522eff08e0d6ddf07',
@@ -410,6 +451,111 @@ try {
   report.observed.apiKeyForeignPaymentReads = 404;
   report.protected.push('API-key Payment Monitor reads enforce the same organization boundaries as JWT reads.');
   report.decisions.push('Empty and wildcard permission sets currently retain full authenticated-key behavior.');
+
+  const mutationCases = [
+    { name: 'read', method: 'PUT', suffix: '/read' },
+    { name: 'archive', method: 'PUT', suffix: '/archive' },
+    { name: 'unarchive', method: 'PUT', suffix: '/unarchive' },
+    { name: 'mute', method: 'PUT', suffix: '/mute', toggle: 'isMuted' },
+    { name: 'pin', method: 'PUT', suffix: '/pin', toggle: 'isPinned' },
+    { name: 'clear', method: 'DELETE', suffix: '/messages' },
+    { name: 'delete', method: 'DELETE', suffix: '' },
+  ];
+  const mutationCredentials = [['jwt', jwtA], ['apiKey', readKey]];
+  const mutationResults = {};
+
+  for (const mutation of mutationCases) {
+    const foreignFixture = await mutationFixture(profileB, `foreign-${mutation.name}`);
+    const foreignPath = `/api/v1/conversations/${foreignFixture.conversation.id}${mutation.suffix}`;
+    const foreignBefore = await mutationSnapshot(foreignFixture.conversation.id);
+    const denialBodies = [];
+
+    for (const [credentialName, credential] of mutationCredentials) {
+      const missingId = crypto.randomUUID();
+      const directForeign = await request(mutation.method, foreignPath, credential);
+      const missingConversation = await request(mutation.method,
+        `/api/v1/conversations/${missingId}${mutation.suffix}`, credential);
+      const forgedQuery = await request(mutation.method,
+        routeWithForgedSelectors(foreignPath, profileA1, jwtA.organizationId), credential);
+      const forgedBody = await request(mutation.method, foreignPath, credential,
+        { profileId: profileA1, organizationId: jwtA.organizationId });
+      for (const response of [directForeign, missingConversation, forgedQuery, forgedBody]) {
+        assert.equal(response.status, 404, `${credentialName} ${mutation.name} foreign denial`);
+      }
+      assert.deepEqual(directForeign.value, missingConversation.value,
+        `${credentialName} ${mutation.name} must not disclose foreign existence`);
+      denialBodies.push(directForeign.value);
+      assert.deepEqual(await mutationSnapshot(foreignFixture.conversation.id), foreignBefore,
+        `${credentialName} ${mutation.name} denied requests must not write`);
+    }
+    assert.deepEqual(denialBodies[0], denialBodies[1],
+      `${mutation.name} JWT and API-key denial bodies must match`);
+
+    const unauthenticatedFixture = await mutationFixture(profileA1, `unauthenticated-${mutation.name}`);
+    const unauthenticatedPath = `/api/v1/conversations/${unauthenticatedFixture.conversation.id}${mutation.suffix}`;
+    const unauthenticatedBefore = await mutationSnapshot(unauthenticatedFixture.conversation.id);
+    const missingCredential = await request(mutation.method, unauthenticatedPath);
+    const invalidCredential = await request(mutation.method, unauthenticatedPath,
+      { type: 'jwt', value: 'invalid' });
+    assert.equal(missingCredential.status, 401, `${mutation.name} missing credential`);
+    assert.equal(invalidCredential.status, 401, `${mutation.name} invalid credential`);
+    assert.deepEqual(await mutationSnapshot(unauthenticatedFixture.conversation.id),
+      unauthenticatedBefore, `${mutation.name} authentication failures must not write`);
+
+    for (const [credentialName, credential] of mutationCredentials) {
+      const ownFixture = await mutationFixture(profileA2, `${credentialName}-${mutation.name}`);
+      const neighborFixture = await mutationFixture(profileA2,
+        `${credentialName}-${mutation.name}-neighbor`);
+      const neighborBefore = await mutationSnapshot(neighborFixture.conversation.id);
+      const ownPath = `/api/v1/conversations/${ownFixture.conversation.id}${mutation.suffix}`;
+      const response = await request(mutation.method, ownPath, credential);
+      assert.equal(response.status, 200, `${credentialName} ${mutation.name} success`);
+
+      if (mutation.name === 'read') {
+        assert.deepEqual(response.value, { success: true });
+        const after = await mutationSnapshot(ownFixture.conversation.id);
+        assert.equal(after.conversation.unreadCount, 0);
+        assert.ok(after.messages.every(message => message.status === 'read'));
+      } else if (mutation.name === 'archive' || mutation.name === 'unarchive') {
+        assert.deepEqual(response.value, { success: true });
+        const after = await mutationSnapshot(ownFixture.conversation.id);
+        assert.deepEqual(after.conversation.metadata,
+          { archived: mutation.name === 'archive' });
+      } else if (mutation.toggle) {
+        assert.deepEqual(response.value, { success: true, [mutation.toggle]: true });
+        const secondResponse = await request(mutation.method, ownPath, credential);
+        assert.equal(secondResponse.status, 200);
+        assert.deepEqual(secondResponse.value, { success: true, [mutation.toggle]: false });
+        const after = await mutationSnapshot(ownFixture.conversation.id);
+        assert.equal(after.conversation.metadata[mutation.toggle], false);
+      } else if (mutation.name === 'clear') {
+        assert.deepEqual(response.value, { success: true });
+        const after = await mutationSnapshot(ownFixture.conversation.id);
+        assert.equal(after.conversation.unreadCount, 0);
+        assert.equal(after.conversation.lastMessageAt, null);
+        assert.deepEqual(after.messages, []);
+      } else {
+        assert.deepEqual(response.value, { success: true });
+        const after = await mutationSnapshot(ownFixture.conversation.id);
+        assert.deepEqual(after, { conversation: null, messages: [] });
+      }
+      assert.deepEqual(await mutationSnapshot(neighborFixture.conversation.id), neighborBefore,
+        `${credentialName} ${mutation.name} must not change a neighboring conversation`);
+    }
+    mutationResults[mutation.name] = {
+      jwtOwn: 200,
+      apiKeyOwn: 200,
+      foreign: 404,
+      missing: 404,
+      unauthenticated: 401,
+      invalidCredential: 401,
+      forgedSelectors: 404,
+      deniedBusinessWrites: 0,
+    };
+  }
+  report.observed.conversationMutations = mutationResults;
+  report.protected.push('Seven conversation mutations enforce organization ownership for JWT and API-key callers.');
+  report.decisions.push('API-key lastUsedAt bookkeeping is excluded from denied business-write counts.');
 
   const hook = await request('POST', '/api/v1/hooks', readKey, {
     url: 'https://example.invalid/synthetic', events: ['message.received'],

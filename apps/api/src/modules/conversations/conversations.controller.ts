@@ -53,42 +53,49 @@ export class ConversationsController {
   }
 
   @Put(':id/read')
+  @RequireTenant({ resource: 'conversation', from: 'param', key: 'id' })
   @ApiOperation({ summary: 'Mark conversation as read' })
   async markAsRead(@Param('id') id: string) {
     return this.service.markAsRead(id);
   }
 
   @Put(':id/archive')
+  @RequireTenant({ resource: 'conversation', from: 'param', key: 'id' })
   @ApiOperation({ summary: 'Archive conversation' })
   async archive(@Param('id') id: string) {
     return this.service.archive(id);
   }
 
   @Put(':id/unarchive')
+  @RequireTenant({ resource: 'conversation', from: 'param', key: 'id' })
   @ApiOperation({ summary: 'Unarchive conversation' })
   async unarchive(@Param('id') id: string) {
     return this.service.unarchive(id);
   }
 
   @Put(':id/mute')
+  @RequireTenant({ resource: 'conversation', from: 'param', key: 'id' })
   @ApiOperation({ summary: 'Toggle mute conversation' })
   async toggleMute(@Param('id') id: string) {
     return this.service.toggleMute(id);
   }
 
   @Put(':id/pin')
+  @RequireTenant({ resource: 'conversation', from: 'param', key: 'id' })
   @ApiOperation({ summary: 'Toggle pin conversation' })
   async togglePin(@Param('id') id: string) {
     return this.service.togglePin(id);
   }
 
   @Delete(':id/messages')
+  @RequireTenant({ resource: 'conversation', from: 'param', key: 'id' })
   @ApiOperation({ summary: 'Clear all messages in conversation' })
   async clearMessages(@Param('id') id: string) {
     return this.service.clearMessages(id);
   }
 
   @Delete(':id')
+  @RequireTenant({ resource: 'conversation', from: 'param', key: 'id' })
   @ApiOperation({ summary: 'Delete conversation and messages' })
   async delete(@Param('id') id: string) {
     return this.service.delete(id);

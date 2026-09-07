@@ -224,6 +224,11 @@ For the same restricted integration, `GET /groups/dnt-operations/profile/:profil
 | `DELETE` | `/conversations/:id` | Delete conversation |
 | `DELETE` | `/conversations/:id/messages` | Clear messages in conversation |
 
+The seven conversation mutation routes verify that `:id` belongs to the
+authenticated caller's organization before calling the conversation service. JWT
+and API-key callers may mutate conversations under another profile in their own
+organization. Missing and foreign IDs both return a non-disclosing 404.
+
 ### Contacts (`/contacts`)
 
 | Method | Endpoint | Description |
