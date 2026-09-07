@@ -158,6 +158,7 @@ For the same restricted integration, `GET /groups/dnt-operations/profile/:profil
 | `GET` | `/messages/schedule/:profileId` | List scheduled messages for a profile |
 | `DELETE` | `/messages/schedule/:id` | Cancel a scheduled message |
 | `GET` | `/messages/profile/:profileId` | List messages for a profile |
+| `POST` | `/messages/profile/:profileId/media` | Retrieve full media payloads for a bounded list of profile-scoped message IDs |
 | `POST` | `/messages/profile/:profileId/resolve-senders` | Resolve provider sender identities to phone numbers |
 | `GET` | `/messages/conversation/:conversationId` | List messages in a conversation |
 | `GET` | `/messages/:id` | Get a single message |

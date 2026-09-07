@@ -7,7 +7,7 @@
     "@ApiExcludeController()",
     "@ApiExcludeEndpoint()"
   ],
-  "routeCount": 230,
+  "routeCount": 231,
   "routes": [
     {
       "method": "DELETE",
@@ -592,6 +592,10 @@
     {
       "method": "GET",
       "path": "/api/v1/messages/profile/:profileId"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/messages/profile/:profileId/media"
     },
     {
       "method": "POST",
