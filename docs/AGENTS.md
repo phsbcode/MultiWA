@@ -31,6 +31,8 @@ All `.md` files in `docs/` covering:
 - `stage-2a-authorization-handoff-2026-09-07.md` defines authorization inventory and characterization deliverables before Stage 2 enforcement changes.
 - `authorization-inventory.md` summarizes the checked route inventory and DNT compatibility boundaries; `stage-2a-results.md` records isolated baseline behavior and the Stage 2B backlog.
 - `stage-2b1-results.md` records Payment Monitor read-route enforcement and its isolated acceptance evidence.
+- `stage-2b2a-conversation-handoff-2026-09-07.md` bounds Sol's next implementation to seven conversation mutation ownership checks, isolated acceptance and Astra review before release.
+- `stage-2b2a-results.md` records the candidate identity, seven-route mutation matrix, zero-denied-write evidence and Astra stop point.
 
 ## Verification
 

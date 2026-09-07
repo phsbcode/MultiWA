@@ -26,6 +26,7 @@ Utility scripts for development, code review, API contract validation, and CI/CD
 - `check-api-contract.mjs` is the gateway for API compatibility checks
 - `api-routes.snapshot.json` is the source of truth for route validation
 - Authorization inventory updates are drafts until selector, evidence and status fields are reviewed; its checker must keep known gaps visible.
+- Mutation characterization must compare complete records from both synthetic organizations immediately before and after each denied request.
 
 ## Work Guidance
 

@@ -93,7 +93,7 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const checkedInventory = JSON.parse(fs.readFileSync(
   path.join(repositoryRoot, 'scripts/authz-routes.inventory.json'), 'utf8',
 ));
-const protectedTenantRoutes = [
+const batch2b1Routes = [
   'GET /api/v1/messages/profile/:profileId',
   'POST /api/v1/messages/profile/:profileId/media',
   'POST /api/v1/messages/profile/:profileId/resolve-senders',
@@ -101,6 +101,16 @@ const protectedTenantRoutes = [
   'GET /api/v1/conversations/:id/messages',
   'GET /api/v1/groups/profile/:profileId',
 ];
+const conversationMutationRoutes = [
+  'PUT /api/v1/conversations/:id/read',
+  'PUT /api/v1/conversations/:id/archive',
+  'PUT /api/v1/conversations/:id/unarchive',
+  'PUT /api/v1/conversations/:id/mute',
+  'PUT /api/v1/conversations/:id/pin',
+  'DELETE /api/v1/conversations/:id/messages',
+  'DELETE /api/v1/conversations/:id',
+];
+const protectedTenantRoutes = [...batch2b1Routes, ...conversationMutationRoutes];
 
 function mutateSource(file, mutation) {
   const originalRead = fs.readFileSync;
@@ -125,7 +135,7 @@ function changeTenantDecorator(source, handler, mutation) {
   return source.slice(0, start) + mutation(source.slice(start, end)) + source.slice(end);
 }
 
-test('detects removal of every Batch 2B.1 ownership decorator', () => {
+test('detects removal of every enforced ownership decorator', () => {
   protectedTenantRoutes.forEach(key => {
     const route = checkedInventory.routes.find(value => value.key === key);
     assert.ok(route, key);
@@ -138,21 +148,26 @@ test('detects removal of every Batch 2B.1 ownership decorator', () => {
 test('detects ownership decorators disabled with comments', () => {
   protectedTenantRoutes.forEach(key => {
     const route = checkedInventory.routes.find(value => value.key === key);
-    const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
-      changeTenantDecorator(source, route.handler, decorator => `// ${decorator}`));
-    assert.ok(errors.includes(`route tenant-check drift: ${key}`), key);
+    for (const comment of [decorator => `// ${decorator}`, decorator => `/* ${decorator} */`]) {
+      const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
+        changeTenantDecorator(source, route.handler, comment));
+      assert.ok(errors.includes(`route tenant-check drift: ${key}`), key);
+    }
   });
 });
 
-test('rejects ambiguous tenant metadata syntax on every Batch 2B.1 route', () => {
+test('rejects ambiguous tenant metadata syntax on every enforced route', () => {
   protectedTenantRoutes.forEach(key => {
     const route = checkedInventory.routes.find(value => value.key === key);
-    const selectorKey = route.tenantChecks[0].key;
+    const check = route.tenantChecks[0];
     const changes = [
       decorator => decorator.replace(/\s*}\)$/, ", 'optional': true })"),
-      decorator => decorator.replace(`key: '${selectorKey}'`,
-        `key: '${selectorKey}' + 'Wrong'`),
+      decorator => decorator.replace(`key: '${check.key}'`,
+        `key: '${check.key}' + 'Wrong'`),
+      decorator => decorator.replace(/\s*}\)$/, ', optional: !false })'),
       decorator => decorator.replace(/\s*}\)$/, ', ...extra })'),
+      decorator => decorator.replace(/\s*}\)$/, ", key: 'duplicate' })"),
+      decorator => decorator.replace(/\s*}\)$/, ', unsupported: true })'),
     ];
     changes.forEach(change => {
       const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
@@ -162,22 +177,20 @@ test('rejects ambiguous tenant metadata syntax on every Batch 2B.1 route', () =>
   });
 });
 
-test('detects weakened tenant resource, location, key and optionality', () => {
-  const key = 'GET /api/v1/messages/profile/:profileId';
-  const route = checkedInventory.routes.find(value => value.key === key);
-  const changes = [
-    decorator => decorator.replace("resource: 'profile'", "resource: 'conversation'"),
-    decorator => decorator.replace("from: 'param'", "from: 'query'"),
-    decorator => decorator.replace("key: 'profileId'", "key: 'otherId'"),
-    decorator => decorator.replace(/\s*}\)$/, ', optional: true })'),
-    decorator => decorator.replace(/\s*}\)$/, ', optional: !false })'),
-    decorator => decorator.replace("key: 'profileId'", "key: 'profileId' + 'Wrong'"),
-    decorator => decorator.replace(/\s*}\)$/, ", 'optional': true })"),
-  ];
-  changes.forEach(change => {
-    const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
-      changeTenantDecorator(source, route.handler, change));
-    assert.ok(errors.includes(`route tenant-check drift: ${key}`));
+test('detects weakened tenant selectors on every conversation mutation route', () => {
+  conversationMutationRoutes.forEach(key => {
+    const route = checkedInventory.routes.find(value => value.key === key);
+    const changes = [
+      decorator => decorator.replace("resource: 'conversation'", "resource: 'profile'"),
+      decorator => decorator.replace("from: 'param'", "from: 'query'"),
+      decorator => decorator.replace("key: 'id'", "key: 'otherId'"),
+      decorator => decorator.replace(/\s*}\)$/, ', optional: true })'),
+    ];
+    changes.forEach(change => {
+      const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
+        changeTenantDecorator(source, route.handler, change));
+      assert.ok(errors.includes(`route tenant-check drift: ${key}`), key);
+    });
   });
 });
 
@@ -196,4 +209,18 @@ test('detects removal of TenantGuard from a protected controller', () => {
   const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
     source.replace('@UseGuards(JwtOrApiKeyGuard, TenantGuard)', '@UseGuards(JwtOrApiKeyGuard)'));
   assert.ok(errors.includes(`route guard drift: ${key}`));
+});
+
+test('detects TenantGuard removal or commenting for every conversation mutation', () => {
+  conversationMutationRoutes.forEach(key => {
+    const route = checkedInventory.routes.find(value => value.key === key);
+    for (const replacement of [
+      '// @UseGuards(JwtOrApiKeyGuard, TenantGuard)',
+      '@UseGuards(JwtOrApiKeyGuard)',
+    ]) {
+      const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
+        source.replace('@UseGuards(JwtOrApiKeyGuard, TenantGuard)', replacement));
+      assert.ok(errors.includes(`route guard drift: ${key}`), key);
+    }
+  });
 });

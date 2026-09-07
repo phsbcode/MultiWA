@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reviewedBaseline": "ebe8a71ba471c3b41297c78522eff08e0d6ddf07",
+  "reviewedBaseline": "e9fad0cb6082c9316440eb22115e0be04d84259e",
   "upstreamReference": "ff51e79dd83da6fd5dee71765dfaf0ea71ae0d24",
   "publicSnapshotRouteCount": 231,
   "excludedControllerRoutes": [
@@ -539,10 +539,17 @@
         "JwtOrApiKeyGuard",
         "TenantGuard"
       ],
-      "tenantChecks": [],
-      "implementedAccess": "authenticated-user",
+      "tenantChecks": [
+        {
+          "resource": "conversation",
+          "from": "param",
+          "key": "id",
+          "optional": false
+        }
+      ],
+      "implementedAccess": "organization",
       "targetAccess": "organization",
-      "status": "confirmed-gap",
+      "status": "protected",
       "selectors": [
         {
           "location": "path",
@@ -555,7 +562,7 @@
       "ownershipEvidence": [
         "apps/api/src/modules/conversations/conversations.controller.ts#delete",
         "apps/api/src/modules/conversations/conversations.service.ts#delete",
-        "Authentication guard is present; no handler-level ownership evidence was found."
+        "Route declares a tenant resource selector enforced after authentication."
       ],
       "sideEffect": "mutation",
       "proposedPermission": "messages:write",
@@ -578,10 +585,17 @@
         "JwtOrApiKeyGuard",
         "TenantGuard"
       ],
-      "tenantChecks": [],
-      "implementedAccess": "authenticated-user",
+      "tenantChecks": [
+        {
+          "resource": "conversation",
+          "from": "param",
+          "key": "id",
+          "optional": false
+        }
+      ],
+      "implementedAccess": "organization",
       "targetAccess": "organization",
-      "status": "confirmed-gap",
+      "status": "protected",
       "selectors": [
         {
           "location": "path",
@@ -594,7 +608,7 @@
       "ownershipEvidence": [
         "apps/api/src/modules/conversations/conversations.controller.ts#clearMessages",
         "apps/api/src/modules/conversations/conversations.service.ts#clearMessages",
-        "Authentication guard is present; no handler-level ownership evidence was found."
+        "Route declares a tenant resource selector enforced after authentication."
       ],
       "sideEffect": "mutation",
       "proposedPermission": "messages:write",
@@ -8509,10 +8523,17 @@
         "JwtOrApiKeyGuard",
         "TenantGuard"
       ],
-      "tenantChecks": [],
-      "implementedAccess": "authenticated-user",
+      "tenantChecks": [
+        {
+          "resource": "conversation",
+          "from": "param",
+          "key": "id",
+          "optional": false
+        }
+      ],
+      "implementedAccess": "organization",
       "targetAccess": "organization",
-      "status": "confirmed-gap",
+      "status": "protected",
       "selectors": [
         {
           "location": "path",
@@ -8525,7 +8546,7 @@
       "ownershipEvidence": [
         "apps/api/src/modules/conversations/conversations.controller.ts#archive",
         "apps/api/src/modules/conversations/conversations.service.ts#archive",
-        "Authentication guard is present; no handler-level ownership evidence was found."
+        "Route declares a tenant resource selector enforced after authentication."
       ],
       "sideEffect": "mutation",
       "proposedPermission": "messages:write",
@@ -8548,10 +8569,17 @@
         "JwtOrApiKeyGuard",
         "TenantGuard"
       ],
-      "tenantChecks": [],
-      "implementedAccess": "authenticated-user",
+      "tenantChecks": [
+        {
+          "resource": "conversation",
+          "from": "param",
+          "key": "id",
+          "optional": false
+        }
+      ],
+      "implementedAccess": "organization",
       "targetAccess": "organization",
-      "status": "confirmed-gap",
+      "status": "protected",
       "selectors": [
         {
           "location": "path",
@@ -8564,7 +8592,7 @@
       "ownershipEvidence": [
         "apps/api/src/modules/conversations/conversations.controller.ts#toggleMute",
         "apps/api/src/modules/conversations/conversations.service.ts#toggleMute",
-        "Authentication guard is present; no handler-level ownership evidence was found."
+        "Route declares a tenant resource selector enforced after authentication."
       ],
       "sideEffect": "mutation",
       "proposedPermission": "messages:write",
@@ -8587,10 +8615,17 @@
         "JwtOrApiKeyGuard",
         "TenantGuard"
       ],
-      "tenantChecks": [],
-      "implementedAccess": "authenticated-user",
+      "tenantChecks": [
+        {
+          "resource": "conversation",
+          "from": "param",
+          "key": "id",
+          "optional": false
+        }
+      ],
+      "implementedAccess": "organization",
       "targetAccess": "organization",
-      "status": "confirmed-gap",
+      "status": "protected",
       "selectors": [
         {
           "location": "path",
@@ -8603,7 +8638,7 @@
       "ownershipEvidence": [
         "apps/api/src/modules/conversations/conversations.controller.ts#togglePin",
         "apps/api/src/modules/conversations/conversations.service.ts#togglePin",
-        "Authentication guard is present; no handler-level ownership evidence was found."
+        "Route declares a tenant resource selector enforced after authentication."
       ],
       "sideEffect": "mutation",
       "proposedPermission": "messages:write",
@@ -8626,10 +8661,17 @@
         "JwtOrApiKeyGuard",
         "TenantGuard"
       ],
-      "tenantChecks": [],
-      "implementedAccess": "authenticated-user",
+      "tenantChecks": [
+        {
+          "resource": "conversation",
+          "from": "param",
+          "key": "id",
+          "optional": false
+        }
+      ],
+      "implementedAccess": "organization",
       "targetAccess": "organization",
-      "status": "confirmed-gap",
+      "status": "protected",
       "selectors": [
         {
           "location": "path",
@@ -8642,7 +8684,7 @@
       "ownershipEvidence": [
         "apps/api/src/modules/conversations/conversations.controller.ts#markAsRead",
         "apps/api/src/modules/conversations/conversations.service.ts#markAsRead",
-        "Authentication guard is present; no handler-level ownership evidence was found."
+        "Route declares a tenant resource selector enforced after authentication."
       ],
       "sideEffect": "mutation",
       "proposedPermission": "messages:write",
@@ -8665,10 +8707,17 @@
         "JwtOrApiKeyGuard",
         "TenantGuard"
       ],
-      "tenantChecks": [],
-      "implementedAccess": "authenticated-user",
+      "tenantChecks": [
+        {
+          "resource": "conversation",
+          "from": "param",
+          "key": "id",
+          "optional": false
+        }
+      ],
+      "implementedAccess": "organization",
       "targetAccess": "organization",
-      "status": "confirmed-gap",
+      "status": "protected",
       "selectors": [
         {
           "location": "path",
@@ -8681,7 +8730,7 @@
       "ownershipEvidence": [
         "apps/api/src/modules/conversations/conversations.controller.ts#unarchive",
         "apps/api/src/modules/conversations/conversations.service.ts#unarchive",
-        "Authentication guard is present; no handler-level ownership evidence was found."
+        "Route declares a tenant resource selector enforced after authentication."
       ],
       "sideEffect": "mutation",
       "proposedPermission": "messages:write",
