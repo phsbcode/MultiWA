@@ -2,6 +2,8 @@
 
 Candidate code commit: `ebe8a71ba471c3b41297c78522eff08e0d6ddf07`.
 
+Acceptance correction commit: `7f7226b14061c2e3bd0392b1c911c804146893c5`.
+
 Candidate image: `multiwa-api:stage2b1-review-ebe8a71`, image ID
 `sha256:a332d5526e08bae77337ba7112fde5409fb8f2153fef3de9f954f04918afdda1`.
 
@@ -20,7 +22,8 @@ for a missing or foreign resource and a 400 for a missing required selector.
 2. The authorization inventory records each `@RequireTenant` resource, source,
    key and optional flag, along with its enforcing guards. Mutation tests remove
    every protected route's decorator, change each selector field, enable the
-   optional flag, and remove `TenantGuard`. Every mutation fails the checker.
+   optional flag, and remove `TenantGuard`. It strips comments before parsing
+   decorators and rejects computed optionality. Every mutation fails the checker.
 3. The isolated runner starts the selected `AUTHZ_TEST_IMAGE` as the API under
    test. It compares the selected image ID with `AUTHZ_EXPECTED_IMAGE_ID`, names
    the API container from that digest, verifies the container image, creates the
@@ -45,6 +48,7 @@ for a missing or foreign resource and a 400 for a missing required selector.
 | Conversation limit and cursor pagination | 200; expected page order and `hasMore` preserved |
 | Same-organization and cross-organization mixed media IDs | 404; no partial response |
 | Media request order | 201; response follows requested ID order |
+| 50 distinct media IDs | 201; all requested rows returned in request order |
 | 51 media IDs | 400 |
 | Groups through the mock adapter | 200; deterministic mock groups returned |
 | Sender resolution through the mock adapter | 201; deterministic mock mapping returned |
@@ -60,7 +64,8 @@ containers discarded all tmpfs data.
 - API compilation passed.
 - Full API suite: 114 passed; two opt-in integration tests skipped.
 - Conversation service suite: 13 passed, including three cursor ownership cases.
-- Authorization inventory mutation suite: nine passed.
+- Authorization inventory mutation suite: 11 passed, including commented
+  decorators, commented guards and computed optionality.
 - Authorization inventory: 232 controller routes and four supplementary
   entrypoints. It records 63 protected, eight intentional public, 161 confirmed
   gaps and four decision-required entries.
@@ -96,7 +101,7 @@ falls back to the existing supported engine selection.
 
 ## Astra re-review handoff
 
-Review `ebe8a71` plus its documentation follow-up. Check the cursor lookup in
+Review `ebe8a71`, `7f7226b` and the documentation follow-up. Check the cursor lookup in
 `ConversationsService.getMessages`, the exact tenant metadata captured by
 `authz-inventory-lib.mjs`, every mutation in
 `check-authz-inventory.test.mjs`, and the image and tmpfs checks in
