@@ -175,7 +175,9 @@ Direct image, video, audio, document, location, contact and poll sends verify th
 body `profileId` belongs to the caller's organization before DTO validation,
 conversation/message persistence or engine access. The existing send payloads and
 responses are unchanged. Text, reply and reaction keep their current behavior
-until their message references can also be bound to the sending profile.
+while now binding local database message IDs to the exact sending profile. The
+provider receives the stored WhatsApp message ID. Quoted text must target the
+referenced conversation; replies and reactions derive their destination from it.
 
 ### Bulk Messaging (`/bulk`)
 
