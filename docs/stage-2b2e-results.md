@@ -3,6 +3,8 @@
 Runtime source commit: `89f5e0e733ced5a58ca4c9dfcad7a53055f9a841`.
 Characterization and inventory commit:
 `9ca8586978474328aae8c29371530b6ff5581416`.
+Parent-containment correction commit:
+`f8665233951b318cf82fbeca2eb027d87516240b`.
 
 Candidate image: `multiwa-api:stage2b2e-89f5e0e-overlay`, image ID
 `sha256:a54a10a8873a605403eb3fc131399fc031bb0c1c5e117020dcf9d840d5ca38ce`.
@@ -26,6 +28,9 @@ unquoted and quoted text, replies, reactions, same-organization cross-profile an
 cross-organization references, missing and inconsistent parents, forged selectors,
 mismatched destinations, owned-invalid DTOs and invalid credentials. Every denial
 compares complete business records for both organizations. Denied writes were zero.
+The inconsistent-parent fixture uses the requested profile on the message while
+its conversation belongs to another profile, so the test independently exercises
+the conversation-parent predicate for all three routes and both credentials.
 
 Success checks compare complete responses, persisted content/local quote links,
 derived conversations and provider IDs. Mock text acknowledgements reach terminal
@@ -51,3 +56,8 @@ pnpm run test:authz-characterization:isolated
 ```
 
 Stop for Astra review. Scheduling and remaining ownership gaps stay outside this batch.
+
+The Baileys adapter currently ignores quoted-text options, and its reaction method
+returns success without sending through the socket. Mock acceptance proves API
+ownership, persistence and ID translation; it does not claim those two Baileys
+provider capabilities work.
