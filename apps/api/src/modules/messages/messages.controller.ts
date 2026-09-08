@@ -39,6 +39,7 @@ export class MessagesController {
 
   // Send text message
   @Post('text')
+  @RequireTenant({ resource: 'profile', from: 'body', key: 'profileId' })
   @ApiOperation({ summary: 'Send text message' })
   async sendText(@Body() dto: SendTextDto, @Req() req: any) {
     const result = await this.service.sendText(dto);
@@ -102,6 +103,7 @@ export class MessagesController {
 
   // Send reaction
   @Post('reaction')
+  @RequireTenant({ resource: 'profile', from: 'body', key: 'profileId' })
   @ApiOperation({ summary: 'React to a message' })
   async sendReaction(@Body() dto: SendReactionDto) {
     return this.service.sendReaction(dto);
@@ -109,6 +111,7 @@ export class MessagesController {
 
   // Reply to message
   @Post('reply')
+  @RequireTenant({ resource: 'profile', from: 'body', key: 'profileId' })
   @ApiOperation({ summary: 'Reply to a message' })
   async sendReply(@Body() dto: SendReplyDto) {
     return this.service.sendReply(dto);

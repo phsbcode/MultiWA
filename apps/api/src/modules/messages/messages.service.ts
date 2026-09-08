@@ -28,9 +28,18 @@ export class MessagesService {
   ) {}
   // Send text message
   async sendText(dto: SendTextDto) {
+    let providerQuotedMessageId: string | undefined;
+    if (dto.quotedMessageId) {
+      const quoted = await this.messageForProfile(dto.quotedMessageId, dto.profileId,
+        'Quoted message not found');
+      if (quoted.conversation.jid !== this.normalizeJid(dto.to)) {
+        throw new NotFoundException('Quoted message not found');
+      }
+      providerQuotedMessageId = quoted.messageId;
+    }
     return this.queueMessage(dto.profileId, dto.to, 'text', {
       text: dto.text,
-    }, dto.quotedMessageId);
+    }, dto.quotedMessageId, providerQuotedMessageId);
   }
 
   // Send image
@@ -99,12 +108,8 @@ export class MessagesService {
 
   // Send reaction
   async sendReaction(dto: SendReactionDto) {
-    const message = await prisma.message.findUnique({
-      where: { id: dto.messageId },
-      include: { conversation: true },
-    });
-    
-    if (!message) throw new NotFoundException('Message not found');
+    const message = await this.messageForProfile(dto.messageId, dto.profileId,
+      'Message not found');
 
     return this.queueMessage(
       dto.profileId,
@@ -119,20 +124,26 @@ export class MessagesService {
 
   // Reply to message
   async sendReply(dto: SendReplyDto) {
-    const quotedMessage = await prisma.message.findUnique({
-      where: { id: dto.quotedMessageId },
-      include: { conversation: true },
-    });
-    
-    if (!quotedMessage) throw new NotFoundException('Quoted message not found');
+    const quotedMessage = await this.messageForProfile(dto.quotedMessageId, dto.profileId,
+      'Quoted message not found');
 
     return this.queueMessage(
       dto.profileId,
       quotedMessage.conversation.jid,
       'text',
       { text: dto.text },
-      dto.quotedMessageId
+      dto.quotedMessageId,
+      quotedMessage.messageId,
     );
+  }
+
+  private async messageForProfile(id: string, profileId: string, message: string) {
+    const found = await prisma.message.findFirst({
+      where: { id, profileId, conversation: { profileId } },
+      include: { conversation: true },
+    });
+    if (!found) throw new NotFoundException(message);
+    return found;
   }
 
   // Send poll
@@ -159,6 +170,7 @@ export class MessagesService {
     type: string,
     content: any,
     quotedMessageId?: string,
+    providerQuotedMessageId?: string,
   ) {
     const profile = await prisma.profile.findUnique({ where: { id: profileId } });
     if (!profile) throw new NotFoundException('Profile not found');
@@ -234,7 +246,8 @@ export class MessagesService {
       }
       switch (type) {
         case 'text':
-          result = await engine.sendText(jid, engineContent.text, { quotedMessageId });
+          result = await engine.sendText(jid, engineContent.text,
+            { quotedMessageId: providerQuotedMessageId });
           break;
         case 'image':
           result = await engine.sendImage(jid, engineContent);
