@@ -72,9 +72,15 @@ and local deletion. Message ownership verifies organization and conversation-par
 consistency; conversation cursors are scoped to the authorized conversation. See
 `stage-2b2c-results.md` for candidate acceptance evidence.
 
+### Batch 2B.2D: direct-send profile ownership
+
+The current candidate protects image, video, audio, document, location, contact
+and poll sends through body profile ownership. It retains connected mock-send and
+disconnected pending contracts. See `stage-2b2d-results.md` for candidate evidence.
+
 ### Remaining Batch 2B.2 work
 
-Protect send, schedule, message-delete and participant operations by the supplied
+Protect text/reply/reaction, schedule, message-delete and participant operations by the supplied
 profile, conversation, group and child IDs. Do not infer ownership from a WhatsApp
 JID. Validate quoted messages and scheduled IDs against the same parent. Address
 static media access through an authenticated or short-lived evidence route without

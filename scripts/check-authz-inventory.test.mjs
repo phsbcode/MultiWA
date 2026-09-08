@@ -117,11 +117,21 @@ const messageAccessRoutes = [
   'GET /api/v1/messages/:id',
   'DELETE /api/v1/messages/:id',
 ];
+const directSendRoutes = [
+  'POST /api/v1/messages/image',
+  'POST /api/v1/messages/video',
+  'POST /api/v1/messages/audio',
+  'POST /api/v1/messages/document',
+  'POST /api/v1/messages/location',
+  'POST /api/v1/messages/contact',
+  'POST /api/v1/messages/poll',
+];
 const protectedTenantRoutes = [
   ...batch2b1Routes,
   ...conversationMutationRoutes,
   ...conversationDetailRoutes,
   ...messageAccessRoutes,
+  ...directSendRoutes,
 ];
 
 function mutateSource(file, mutation) {
@@ -224,6 +234,23 @@ test('detects weakened tenant selectors on enforced message access routes', () =
   });
 });
 
+test('detects weakened tenant selectors on direct-send routes', () => {
+  directSendRoutes.forEach(key => {
+    const route = checkedInventory.routes.find(value => value.key === key);
+    const changes = [
+      decorator => decorator.replace("resource: 'profile'", "resource: 'message'"),
+      decorator => decorator.replace("from: 'body'", "from: 'query'"),
+      decorator => decorator.replace("key: 'profileId'", "key: 'otherId'"),
+      decorator => decorator.replace(/\s*}\)$/, ', optional: true })'),
+    ];
+    changes.forEach(change => {
+      const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
+        changeTenantDecorator(source, route.handler, change));
+      assert.ok(errors.includes(`route tenant-check drift: ${key}`), key);
+    });
+  });
+});
+
 test('detects TenantGuard disabled with a comment', () => {
   const key = 'GET /api/v1/messages/profile/:profileId';
   const route = checkedInventory.routes.find(value => value.key === key);
@@ -257,6 +284,20 @@ test('detects TenantGuard removal or commenting for enforced conversation routes
 
 test('detects TenantGuard removal or commenting for enforced message access routes', () => {
   messageAccessRoutes.forEach(key => {
+    const route = checkedInventory.routes.find(value => value.key === key);
+    for (const replacement of [
+      '// @UseGuards(JwtOrApiKeyGuard, TenantGuard)',
+      '@UseGuards(JwtOrApiKeyGuard)',
+    ]) {
+      const errors = mutateSource(path.join(repositoryRoot, route.source), source =>
+        source.replace('@UseGuards(JwtOrApiKeyGuard, TenantGuard)', replacement));
+      assert.ok(errors.includes(`route guard drift: ${key}`), key);
+    }
+  });
+});
+
+test('detects TenantGuard removal or commenting for direct-send routes', () => {
+  directSendRoutes.forEach(key => {
     const route = checkedInventory.routes.find(value => value.key === key);
     for (const replacement of [
       '// @UseGuards(JwtOrApiKeyGuard, TenantGuard)',

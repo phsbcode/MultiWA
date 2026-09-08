@@ -54,6 +54,7 @@ export class MessagesController {
 
   // Send image
   @Post('image')
+  @RequireTenant({ resource: 'profile', from: 'body', key: 'profileId' })
   @ApiOperation({ summary: 'Send image message' })
   async sendImage(@Body() dto: SendImageDto) {
     return this.service.sendImage(dto);
@@ -61,6 +62,7 @@ export class MessagesController {
 
   // Send video
   @Post('video')
+  @RequireTenant({ resource: 'profile', from: 'body', key: 'profileId' })
   @ApiOperation({ summary: 'Send video message' })
   async sendVideo(@Body() dto: SendVideoDto) {
     return this.service.sendVideo(dto);
@@ -68,6 +70,7 @@ export class MessagesController {
 
   // Send audio/voice note
   @Post('audio')
+  @RequireTenant({ resource: 'profile', from: 'body', key: 'profileId' })
   @ApiOperation({ summary: 'Send audio/voice note' })
   async sendAudio(@Body() dto: SendAudioDto) {
     return this.service.sendAudio(dto);
@@ -75,6 +78,7 @@ export class MessagesController {
 
   // Send document
   @Post('document')
+  @RequireTenant({ resource: 'profile', from: 'body', key: 'profileId' })
   @ApiOperation({ summary: 'Send document/file' })
   async sendDocument(@Body() dto: SendDocumentDto) {
     return this.service.sendDocument(dto);
@@ -82,6 +86,7 @@ export class MessagesController {
 
   // Send location
   @Post('location')
+  @RequireTenant({ resource: 'profile', from: 'body', key: 'profileId' })
   @ApiOperation({ summary: 'Send location' })
   async sendLocation(@Body() dto: SendLocationDto) {
     return this.service.sendLocation(dto);
@@ -89,6 +94,7 @@ export class MessagesController {
 
   // Send contact card
   @Post('contact')
+  @RequireTenant({ resource: 'profile', from: 'body', key: 'profileId' })
   @ApiOperation({ summary: 'Send contact card (vCard)' })
   async sendContact(@Body() dto: SendContactDto) {
     return this.service.sendContact(dto);
@@ -110,6 +116,7 @@ export class MessagesController {
 
   // Send poll
   @Post('poll')
+  @RequireTenant({ resource: 'profile', from: 'body', key: 'profileId' })
   @ApiOperation({ summary: 'Send interactive poll' })
   async sendPoll(@Body() dto: SendPollDto) {
     return this.service.sendPoll(dto);

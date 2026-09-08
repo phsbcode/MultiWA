@@ -35,7 +35,10 @@ export class TenantGuard implements CanActivate {
         if (check.optional) continue;
         throw new BadRequestException(`Missing ${check.key}.`);
       }
-      if (!await this.belongsToOrganization(check.resource, String(value), organizationId)) {
+      if (typeof value !== 'string') {
+        throw new BadRequestException(`Invalid ${check.key}.`);
+      }
+      if (!await this.belongsToOrganization(check.resource, value, organizationId)) {
         throw new NotFoundException('Resource not found.');
       }
     }

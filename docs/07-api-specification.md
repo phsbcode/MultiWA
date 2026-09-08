@@ -171,6 +171,12 @@ belong to the selected conversation; foreign, missing and mismatched resources
 return a generic 404. The optional conversation-message `limit` is parsed as an
 integer before it reaches the service and retains the existing default of 50.
 
+Direct image, video, audio, document, location, contact and poll sends verify the
+body `profileId` belongs to the caller's organization before DTO validation,
+conversation/message persistence or engine access. The existing send payloads and
+responses are unchanged. Text, reply and reaction keep their current behavior
+until their message references can also be bound to the sending profile.
+
 ### Bulk Messaging (`/bulk`)
 
 | Method | Endpoint | Description |
