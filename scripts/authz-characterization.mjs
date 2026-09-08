@@ -1074,16 +1074,27 @@ try {
   report.decisions.push('API-key lastUsedAt bookkeeping is excluded from denied business-write counts.');
 
   const directSendCases = [
-    { name: 'image', body: { base64: 'aGVsbG8=', caption: 'Synthetic image' } },
-    { name: 'video', body: { base64: 'aGVsbG8=', caption: 'Synthetic video' } },
-    { name: 'audio', body: { base64: 'aGVsbG8=', ptt: true } },
-    { name: 'document', body: { base64: 'aGVsbG8=', filename: 'synthetic.pdf' } },
+    { name: 'image', body: { base64: 'aGVsbG8=', caption: 'Synthetic image' },
+      expectedContent: { base64: 'aGVsbG8=', caption: 'Synthetic image', mimetype: 'image/jpeg' } },
+    { name: 'video', body: { base64: 'aGVsbG8=', caption: 'Synthetic video' },
+      expectedContent: { base64: 'aGVsbG8=', caption: 'Synthetic video', mimetype: 'video/mp4' } },
+    { name: 'audio', body: { base64: 'aGVsbG8=', ptt: true },
+      expectedContent: { base64: 'aGVsbG8=', mimetype: 'audio/mpeg', ptt: true } },
+    { name: 'document', body: { base64: 'aGVsbG8=', filename: 'synthetic.pdf' },
+      expectedContent: { base64: 'aGVsbG8=', filename: 'synthetic.pdf',
+        mimetype: 'application/octet-stream' } },
     { name: 'location', body: { latitude: 3.1, longitude: 101.7,
-      name: 'Synthetic location' } },
+      name: 'Synthetic location' }, expectedContent: { latitude: 3.1, longitude: 101.7,
+        name: 'Synthetic location' } },
     { name: 'contact', body: { contacts: [{ name: 'Synthetic Contact',
-      phone: '60111111111' }] } },
+      phone: '60111111111' }] }, expectedContent: {
+        contacts: [{ displayName: 'Synthetic Contact',
+          vcard: 'BEGIN:VCARD\nVERSION:3.0\nFN:Synthetic Contact\n' +
+            'TEL;type=CELL;type=VOICE;waid=60111111111:60111111111\nEND:VCARD' }],
+        name: 'Synthetic Contact', phone: '60111111111' } },
     { name: 'poll', body: { question: 'Synthetic choice?', options: ['One', 'Two'],
-      allowMultipleAnswers: false } },
+      allowMultipleAnswers: false }, expectedContent: { question: 'Synthetic choice?',
+        options: ['One', 'Two'], allowMultipleAnswers: false } },
   ];
   const directSendCredentials = [['jwt', jwtA], ['apiKey', readKey]];
   let directSendSuccessRequests = 0;
@@ -1100,17 +1111,31 @@ try {
         const response = await request('POST', `/api/v1/messages/${directCase.name}`,
           credential, { profileId, to, ...directCase.body });
         assert.equal(response.status, 201, `${credentialName} ${profileLabel} ${directCase.name}`);
-        assert.equal(response.value.success, true);
-        assert.equal(response.value.status, connected ? 'sent' : 'pending');
+        assert.match(response.value.messageId,
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+        assert.match(response.value.conversationId,
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
         if (connected) {
           assert.match(response.value.waMessageId, new RegExp(`^mock_${directCase.name}_`));
           connectedDirectSendMessageIds.push(response.value.messageId);
         }
-        else assert.equal(response.value.warning, 'Profile not connected, message queued');
         const saved = await prisma.message.findUnique({
           where: { id: response.value.messageId }, include: { conversation: true },
         });
         assert.ok(saved);
+        assert.deepEqual(response.value, connected ? {
+          success: true,
+          messageId: saved.id,
+          conversationId: saved.conversationId,
+          waMessageId: saved.messageId,
+          status: 'sent',
+        } : {
+          success: true,
+          messageId: saved.id,
+          conversationId: saved.conversationId,
+          status: 'pending',
+          warning: 'Profile not connected, message queued',
+        });
         assert.equal(saved.profileId, profileId);
         assert.equal(saved.conversation.profileId, profileId);
         assert.equal(saved.conversationId, response.value.conversationId);
@@ -1118,29 +1143,8 @@ try {
         assert.equal(saved.direction, 'outgoing');
         assert.equal(saved.type, directCase.name);
         assert.equal(saved.status, connected ? 'sent' : 'pending');
+        assert.deepEqual(saved.content, directCase.expectedContent);
         assert.equal(await prisma.message.count({ where: { profileId } }), beforeCount + 1);
-        if (directCase.name === 'image') assert.equal(saved.content.mimetype, 'image/jpeg');
-        if (directCase.name === 'video') assert.equal(saved.content.mimetype, 'video/mp4');
-        if (directCase.name === 'audio') {
-          assert.equal(saved.content.mimetype, 'audio/mpeg');
-          assert.equal(saved.content.ptt, true);
-        }
-        if (directCase.name === 'document') {
-          assert.equal(saved.content.filename, 'synthetic.pdf');
-          assert.equal(saved.content.mimetype, 'application/octet-stream');
-        }
-        if (directCase.name === 'location') {
-          assert.equal(saved.content.latitude, 3.1);
-          assert.equal(saved.content.longitude, 101.7);
-        }
-        if (directCase.name === 'contact') {
-          assert.equal(saved.content.name, 'Synthetic Contact');
-          assert.match(saved.content.contacts[0].vcard, /^BEGIN:VCARD/);
-        }
-        if (directCase.name === 'poll') {
-          assert.deepEqual(saved.content.options, ['One', 'Two']);
-          assert.equal(saved.content.allowMultipleAnswers, false);
-        }
         directSendSuccessRequests++;
       }
     }
