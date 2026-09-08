@@ -12,7 +12,10 @@ Candidate image: `multiwa-api:stage2b2d-5fb7549-r2-overlay`, image ID
 `sha256:e386f6af397676b2b68c0bb3e8139972f2adfaa7c1ee064cee60be4557cd47dc`.
 Its parent is the accepted live Batch 2B.2C image
 `sha256:920bc9d3336b928a552b6a22aa28526874c74a8c2315f6f5c49b65d56de18026`.
-Live remains on that parent. This candidate has not been merged or deployed.
+PR 10 merged to `main` as
+`08572ea8c31fe6aa6aa9a5d7f11c061a62a5e1c8`. The API was recreated from the
+candidate at `2026-09-08T00:46:50Z`. Batch 2B.2C remains tagged as the rollback
+image.
 
 ## Change
 
@@ -119,11 +122,38 @@ pnpm run test:authz-characterization:isolated
 The runtime image is from `5fb7549`; correction commit `41bd98a` supplies the final
 mounted test script.
 
-## Limits and review stop
+## Release acceptance and rollback
+
+The deployed API, PostgreSQL and Redis reported healthy. Read-only JWT and Payment
+Monitor API-key acceptance returned 200 for conversation messages with the limit
+omitted, the same route with `limit=2`, and single-message detail. Both lists were
+bounded and chronological; message detail retained its nested conversation. No
+live send endpoint was called.
+
+The Payment Monitor staff `/exec` authenticated inside its Apps Script iframe.
+The desktop queue cold load took 21.96 seconds and a protected PDF rendered in
+1.97 seconds. Mobile queue load took 3.24 seconds and the same PDF rendered in
+2.16 seconds at 390 by 844 pixels. Mobile had no horizontal overflow and browser
+errors were zero.
 
 Guard-to-service profile reassignment races remain outside this batch. A successful
 send persists before provider execution by existing design. The pending path can
 therefore create a local message without a connected engine. API-key permission
 semantics remain unchanged.
 
-Stop for Astra review. Do not merge, deploy or begin the message-reference slice.
+Rollback restores Batch 2B.2C and recreates only the API service:
+
+```bash
+cd /home/hermes/MultiWA
+docker tag multiwa-api:stage2b2c-d3bc725-overlay multiwa-api:latest
+docker compose -p multiwa -f /home/hermes/MultiWA/docker-compose.yml \
+  up -d --no-deps --no-build --force-recreate api
+```
+
+## Release closeout
+
+Astra approved the final candidate through `b10885a`. Deployment changed only the
+Compose API container. Acceptance did not scan groups, process attachments, send
+messages, mutate reviews, delete messages, submit payments, write Register of
+Payments or change credentials. API-key `lastUsedAt` authentication bookkeeping
+was the only database metadata touched by read acceptance.
