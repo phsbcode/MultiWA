@@ -1236,6 +1236,13 @@ try {
   report.protected.push('Seven direct-send routes enforce profile organization ownership before validation and persistence.');
   report.decisions.push('Text, reply and reaction remain deferred until referenced messages are bound to the sending profile.');
 
+  const referenceInconsistentMessage = await prisma.message.create({ data: {
+    profileId: profileA1, conversationId: conversationA2.id,
+    messageId: `provider-reference-inconsistent-${suffix}`, direction: 'incoming',
+    senderJid: `synthetic-reference-inconsistent-${suffix}@s.whatsapp.net`, type: 'text',
+    content: { text: 'synthetic reference inconsistent parent' }, status: 'delivered',
+    metadata: { fixture: 'reference-inconsistent' }, timestamp: new Date(-810000),
+  } });
   const referenceCredentials = [['jwt', jwtA], ['apiKey', readKey]];
   const referenceProfiles = [
     { label: 'A1', id: profileA1, connected: true, target: messageA1,
@@ -1299,7 +1306,7 @@ try {
   for (const route of referenceRoutes) {
     for (const [_credentialName, credential] of referenceCredentials) {
       for (const referenceId of [messageA2.id, messageB.id, crypto.randomUUID(),
-        inconsistentMessage.id]) {
+        referenceInconsistentMessage.id]) {
         await requestWithoutBusinessWrites({ method: 'POST',
           route: `/api/v1/messages/${route.name}`, credential,
           body: { profileId: profileA1, ...route.base, [route.field]: referenceId },
