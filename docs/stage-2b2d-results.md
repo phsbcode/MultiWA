@@ -5,6 +5,8 @@ Characterization and inventory commit:
 `9fcd5fe18be7edefa31f4c46ff6df73fc5b3fb6c`.
 Acceptance correction commit:
 `743292aae91ae2aca40d0dda99d55eec824eab9c`.
+Complete HTTP contract assertion commit:
+`41bd98ac79c6c6a9b4f06119a134a6cb8ae4f4e9`.
 
 Candidate image: `multiwa-api:stage2b2d-5fb7549-overlay`, image ID
 `sha256:f4b0a187e5cc6376a322abb861343f3ff9866677983a72469971449c87e6f26a`.
@@ -51,6 +53,9 @@ The candidate repeated those 28 successes and completed 98 denial requests, for 
 - Every saved message retained the requested profile, its matching conversation,
   outgoing direction, mapped content/defaults and expected status. Tests covered
   existing and new conversations.
+- Every success validates generated local IDs as UUIDs and connected provider IDs
+  as the expected mock type, then compares the complete HTTP response and complete
+  persisted JSON content against independently constructed expected objects.
 - Foreign/missing profiles returned matching 404 bodies for JWT and API keys.
   Forged query selectors and malformed message content did not bypass ownership.
 - Missing, empty, array and object profile selectors returned 400. Missing or
@@ -111,7 +116,7 @@ AUTHZ_EXPECTED_IMAGE_ID=sha256:f4b0a187e5cc6376a322abb861343f3ff9866677983a72469
 pnpm run test:authz-characterization:isolated
 ```
 
-The runtime image is from `5fb7549`; correction commit `743292a` supplies the final
+The runtime image is from `5fb7549`; correction commit `41bd98a` supplies the final
 mounted test script.
 
 ## Limits and review stop
