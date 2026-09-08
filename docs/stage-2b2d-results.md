@@ -8,8 +8,8 @@ Acceptance correction commit:
 Complete HTTP contract assertion commit:
 `41bd98ac79c6c6a9b4f06119a134a6cb8ae4f4e9`.
 
-Candidate image: `multiwa-api:stage2b2d-5fb7549-overlay`, image ID
-`sha256:f4b0a187e5cc6376a322abb861343f3ff9866677983a72469971449c87e6f26a`.
+Candidate image: `multiwa-api:stage2b2d-5fb7549-r2-overlay`, image ID
+`sha256:e386f6af397676b2b68c0bb3e8139972f2adfaa7c1ee064cee60be4557cd47dc`.
 Its parent is the accepted live Batch 2B.2C image
 `sha256:920bc9d3336b928a552b6a22aa28526874c74a8c2315f6f5c49b65d56de18026`.
 Live remains on that parent. This candidate has not been merged or deployed.
@@ -103,7 +103,7 @@ FROM multiwa-api:stage2b2c-d3bc725-overlay
 COPY dist /app/apps/api/dist
 ```
 
-The 937 KB API dist layer came from a clean comparison against `5fb7549`. All 158
+The 939 KB API dist layer came from a clean comparison against `5fb7549`. All 158
 compiled JavaScript files match a fresh local build, and the candidate Prisma
 schema matches the checkout.
 
@@ -111,8 +111,8 @@ Reproduce isolated acceptance:
 
 ```bash
 cd /home/hermes/MultiWA
-AUTHZ_TEST_IMAGE=multiwa-api:stage2b2d-5fb7549-overlay \
-AUTHZ_EXPECTED_IMAGE_ID=sha256:f4b0a187e5cc6376a322abb861343f3ff9866677983a72469971449c87e6f26a \
+AUTHZ_TEST_IMAGE=multiwa-api:stage2b2d-5fb7549-r2-overlay \
+AUTHZ_EXPECTED_IMAGE_ID=sha256:e386f6af397676b2b68c0bb3e8139972f2adfaa7c1ee064cee60be4557cd47dc \
 pnpm run test:authz-characterization:isolated
 ```
 
