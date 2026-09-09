@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reviewedBaseline": "5fb75499279c623c90147a0c78ac491d9dc0fa72",
+  "reviewedBaseline": "89f5e0e733ced5a58ca4c9dfcad7a53055f9a841",
   "upstreamReference": "ff51e79dd83da6fd5dee71765dfaf0ea71ae0d24",
   "publicSnapshotRouteCount": 231,
   "excludedControllerRoutes": [
@@ -7244,10 +7244,17 @@
         "JwtOrApiKeyGuard",
         "TenantGuard"
       ],
-      "tenantChecks": [],
-      "implementedAccess": "authenticated-user",
+      "tenantChecks": [
+        {
+          "resource": "profile",
+          "from": "body",
+          "key": "profileId",
+          "optional": false
+        }
+      ],
+      "implementedAccess": "organization",
       "targetAccess": "organization",
-      "status": "confirmed-gap",
+      "status": "protected",
       "selectors": [
         {
           "location": "body",
@@ -7267,7 +7274,7 @@
       "ownershipEvidence": [
         "apps/api/src/modules/messages/messages.controller.ts#sendReaction",
         "apps/api/src/modules/messages/messages.service.ts#sendReaction",
-        "Authentication guard is present; no handler-level ownership evidence was found."
+        "Route declares a tenant resource selector enforced after authentication."
       ],
       "sideEffect": "mutation",
       "proposedPermission": "messages:write",
@@ -7290,10 +7297,17 @@
         "JwtOrApiKeyGuard",
         "TenantGuard"
       ],
-      "tenantChecks": [],
-      "implementedAccess": "authenticated-user",
+      "tenantChecks": [
+        {
+          "resource": "profile",
+          "from": "body",
+          "key": "profileId",
+          "optional": false
+        }
+      ],
+      "implementedAccess": "organization",
       "targetAccess": "organization",
-      "status": "confirmed-gap",
+      "status": "protected",
       "selectors": [
         {
           "location": "body",
@@ -7313,7 +7327,7 @@
       "ownershipEvidence": [
         "apps/api/src/modules/messages/messages.controller.ts#sendReply",
         "apps/api/src/modules/messages/messages.service.ts#sendReply",
-        "Authentication guard is present; no handler-level ownership evidence was found."
+        "Route declares a tenant resource selector enforced after authentication."
       ],
       "sideEffect": "mutation",
       "proposedPermission": "messages:write",
@@ -7382,10 +7396,17 @@
         "JwtOrApiKeyGuard",
         "TenantGuard"
       ],
-      "tenantChecks": [],
-      "implementedAccess": "authenticated-user",
+      "tenantChecks": [
+        {
+          "resource": "profile",
+          "from": "body",
+          "key": "profileId",
+          "optional": false
+        }
+      ],
+      "implementedAccess": "organization",
       "targetAccess": "organization",
-      "status": "confirmed-gap",
+      "status": "protected",
       "selectors": [
         {
           "location": "body",
@@ -7412,7 +7433,7 @@
       "ownershipEvidence": [
         "apps/api/src/modules/messages/messages.controller.ts#sendText",
         "apps/api/src/modules/messages/messages.service.ts#sendText",
-        "Authentication guard is present; no handler-level ownership evidence was found."
+        "Route declares a tenant resource selector enforced after authentication."
       ],
       "sideEffect": "mutation",
       "proposedPermission": "messages:write",

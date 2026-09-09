@@ -8,16 +8,16 @@ the gap. Later Stage 2 work must reduce those entries through behavior and tests
 
 ## Coverage
 
-Reviewed baseline: `5fb75499279c623c90147a0c78ac491d9dc0fa72`.
+Reviewed baseline: `89f5e0e733ced5a58ca4c9dfcad7a53055f9a841`.
 
 - 232 controller routes found in source.
 - 231 routes in the public API snapshot.
 - One Swagger-excluded controller route: `GET /api/v1`.
 - Four supplementary entrypoints: static media, API docs and two `/ws` gateways.
 - 236 total inventory entries.
-- 81 entries have explicit protected evidence.
+- 84 entries have explicit protected evidence.
 - Eight are intentional public endpoints.
-- 143 have confirmed ownership/role gaps in source.
+- 140 have confirmed ownership/role gaps in source.
 - Four need an ownership decision, including three legacy hook routes.
 
 The high gap count is deliberate. A class-level authentication guard does not
@@ -49,6 +49,7 @@ side effect, proposed permission, source evidence and known DNT consumers.
 | Conversation list/message list/detail | Organization ownership enforced for profile list, conversation messages and detail. Detail accepts a strict 1–100 message limit and defaults to 50. | Preserve chronological behavior and existing response fields. |
 | Conversation mutations | Read, archive, unarchive, mute, pin, clear-messages and delete verify conversation ownership before service execution. | Preserve current success bodies and service semantics. |
 | Direct media/location/contact/poll sends | Seven routes verify body profile ownership before validation, persistence or provider lookup. | Preserve send payloads, sent/pending response contracts and inert-provider acceptance. |
+| Text/reply/reaction sends | Profile ownership and exact message-to-profile/conversation containment enforced; local IDs translate to stored provider IDs. | Preserve unquoted text and exact destination behavior. |
 | Conversation search/context | Current controller verifies profile organization; service verifies child containment. | Retain both checks and add guard-level regression coverage. |
 | Group list | Ordinary and DNT Operations routes enforce organization ownership; the DNT route retains its exact flag check. | Preserve provider response shape and exact DNT flag behavior. |
 | Legacy hooks | Authenticated global registry with no owner/profile field. | Complete the explicit hook ownership migration in Stage 2D. |

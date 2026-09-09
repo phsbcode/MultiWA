@@ -1236,6 +1236,132 @@ try {
   report.protected.push('Seven direct-send routes enforce profile organization ownership before validation and persistence.');
   report.decisions.push('Text, reply and reaction remain deferred until referenced messages are bound to the sending profile.');
 
+  const referenceInconsistentMessage = await prisma.message.create({ data: {
+    profileId: profileA1, conversationId: conversationA2.id,
+    messageId: `provider-reference-inconsistent-${suffix}`, direction: 'incoming',
+    senderJid: `synthetic-reference-inconsistent-${suffix}@s.whatsapp.net`, type: 'text',
+    content: { text: 'synthetic reference inconsistent parent' }, status: 'delivered',
+    metadata: { fixture: 'reference-inconsistent' }, timestamp: new Date(-810000),
+  } });
+  const referenceCredentials = [['jwt', jwtA], ['apiKey', readKey]];
+  const referenceProfiles = [
+    { label: 'A1', id: profileA1, connected: true, target: messageA1,
+      conversation: conversationA1 },
+    { label: 'A2', id: profileA2, connected: false, target: messageA2,
+      conversation: conversationA2 },
+  ];
+  const referenceAckIds = [];
+  let referenceSuccesses = 0;
+  async function assertReferenceSuccess(route, credential, profile, body, expected) {
+    const response = await request('POST', `/api/v1/messages/${route}`, credential,
+      { profileId: profile.id, ...body });
+    assert.equal(response.status, 201);
+    const saved = await prisma.message.findUnique({
+      where: { id: response.value.messageId }, include: { conversation: true },
+    });
+    assert.ok(saved);
+    assert.deepEqual(response.value, profile.connected ? {
+      success: true, messageId: saved.id, conversationId: saved.conversationId,
+      waMessageId: saved.messageId, status: 'sent',
+    } : { success: true, messageId: saved.id, conversationId: saved.conversationId,
+      status: 'pending', warning: 'Profile not connected, message queued' });
+    assert.equal(saved.profileId, profile.id);
+    assert.equal(saved.conversation.profileId, profile.id);
+    assert.equal(saved.conversation.jid, expected.jid);
+    assert.equal(saved.type, expected.type);
+    assert.equal(saved.quotedMessageId, expected.quotedMessageId || null);
+    assert.deepEqual(saved.content, expected.content);
+    if (profile.connected && route !== 'reaction') referenceAckIds.push(saved.id);
+    referenceSuccesses++;
+  }
+  for (const [_credentialName, credential] of referenceCredentials) {
+    for (const profile of referenceProfiles) {
+      await assertReferenceSuccess('text', credential, profile,
+        { to: `synthetic-unquoted-${profile.label}-${suffix}@s.whatsapp.net`, text: 'Unquoted' },
+        { jid: `synthetic-unquoted-${profile.label}-${suffix}@s.whatsapp.net`,
+          type: 'text', content: { text: 'Unquoted' } });
+      await assertReferenceSuccess('text', credential, profile,
+        { to: profile.conversation.jid, text: 'Quoted', quotedMessageId: profile.target.id },
+        { jid: profile.conversation.jid, type: 'text', content: { text: 'Quoted' },
+          quotedMessageId: profile.target.id });
+      await assertReferenceSuccess('reply', credential, profile,
+        { text: 'Reply', quotedMessageId: profile.target.id },
+        { jid: profile.conversation.jid, type: 'text', content: { text: 'Reply' },
+          quotedMessageId: profile.target.id });
+      await assertReferenceSuccess('reaction', credential, profile,
+        { emoji: 'ok', messageId: profile.target.id },
+        { jid: profile.conversation.jid, type: 'reaction',
+          content: { messageId: profile.target.messageId, emoji: 'ok' } });
+    }
+  }
+  await waitForTerminalMockAcknowledgements(referenceAckIds);
+
+  const referenceOrganizations = [jwtA.organizationId, jwtB.organizationId];
+  let referenceDenials = 0;
+  const referenceRoutes = [
+    { name: 'text', field: 'quotedMessageId', base: { to: conversationA1.jid, text: 'Denied' } },
+    { name: 'reply', field: 'quotedMessageId', base: { text: 'Denied' } },
+    { name: 'reaction', field: 'messageId', base: { emoji: 'ok' } },
+  ];
+  for (const route of referenceRoutes) {
+    for (const [_credentialName, credential] of referenceCredentials) {
+      for (const referenceId of [messageA2.id, messageB.id, crypto.randomUUID(),
+        referenceInconsistentMessage.id]) {
+        const requestBase = route.name === 'text'
+          && referenceId === referenceInconsistentMessage.id
+          ? { ...route.base, to: conversationA2.jid }
+          : route.base;
+        await requestWithoutBusinessWrites({ method: 'POST',
+          route: `/api/v1/messages/${route.name}`, credential,
+          body: { profileId: profileA1, ...requestBase, [route.field]: referenceId },
+          expectedStatus: 404, label: `${route.name} denied reference`,
+          organizationIds: referenceOrganizations });
+        referenceDenials++;
+      }
+      await requestWithoutBusinessWrites({ method: 'POST',
+        route: routeWithForgedSelectors(`/api/v1/messages/${route.name}`,
+          profileB, jwtB.organizationId), credential,
+        body: { profileId: profileA1, ...route.base, [route.field]: messageB.id },
+        expectedStatus: 404, label: `${route.name} forged reference`,
+        organizationIds: referenceOrganizations });
+      referenceDenials++;
+      await requestWithoutBusinessWrites({ method: 'POST',
+        route: `/api/v1/messages/${route.name}`, credential,
+        body: { profileId: profileB, ...route.base, [route.field]: messageB.id },
+        expectedStatus: 404, label: `${route.name} foreign profile`,
+        organizationIds: referenceOrganizations });
+      referenceDenials++;
+    }
+    await requestWithoutBusinessWrites({ method: 'POST',
+      route: `/api/v1/messages/${route.name}`, credential: jwtA,
+      body: { profileId: profileA1 }, expectedStatus: 400,
+      label: `${route.name} invalid DTO`, organizationIds: referenceOrganizations });
+    referenceDenials++;
+    for (const credential of [null, { type: 'jwt', value: 'invalid' },
+      { type: 'api-key', value: 'invalid' }]) {
+      await requestWithoutBusinessWrites({ method: 'POST',
+        route: `/api/v1/messages/${route.name}`, credential,
+        body: { profileId: profileA1, ...route.base, [route.field]: messageA1.id },
+        expectedStatus: 401, label: `${route.name} invalid credential`,
+        organizationIds: referenceOrganizations });
+      referenceDenials++;
+    }
+  }
+  for (const [_credentialName, credential] of referenceCredentials) {
+    await requestWithoutBusinessWrites({ method: 'POST', route: '/api/v1/messages/text',
+      credential, body: { profileId: profileA1, to: '60199999999', text: 'Mismatch',
+        quotedMessageId: messageA1.id }, expectedStatus: 404,
+      label: 'text mismatched quoted destination', organizationIds: referenceOrganizations });
+    referenceDenials++;
+  }
+  report.observed.referenceSendOwnership = {
+    successfulRequests: referenceSuccesses, deniedRequests: referenceDenials,
+    unquotedText: 201, quotedText: 201, reply: 201, reaction: 201,
+    invalidReference: 404, mismatchedDestination: 404, deniedBusinessWrites: 0,
+  };
+  report.protected.push('Text, reply and reaction bind local message references to the exact sending profile.');
+  report.decisions.push('Reference-send DTO message IDs are local database IDs; providers receive the stored WhatsApp message ID.');
+
   const hook = await request('POST', '/api/v1/hooks', readKey, {
     url: 'https://example.invalid/synthetic', events: ['message.received'],
   });

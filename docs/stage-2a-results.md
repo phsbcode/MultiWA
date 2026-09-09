@@ -80,7 +80,7 @@ disconnected pending contracts. See `stage-2b2d-results.md` for candidate eviden
 
 ### Remaining Batch 2B.2 work
 
-Protect text/reply/reaction, schedule, message-delete and participant operations by the supplied
+Protect schedule, message-delete and participant operations by the supplied
 profile, conversation, group and child IDs. Do not infer ownership from a WhatsApp
 JID. Validate quoted messages and scheduled IDs against the same parent. Address
 static media access through an authenticated or short-lived evidence route without
