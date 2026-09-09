@@ -5,6 +5,8 @@ Characterization and inventory commit:
 `9ca8586978474328aae8c29371530b6ff5581416`.
 Parent-containment correction commit:
 `f8665233951b318cf82fbeca2eb027d87516240b`.
+Quoted-text parent-isolation correction commit:
+`9dbc00228ec06deab90b9c9b2793bb62556d59a9`.
 
 Candidate image: `multiwa-api:stage2b2e-89f5e0e-overlay`, image ID
 `sha256:a54a10a8873a605403eb3fc131399fc031bb0c1c5e117020dcf9d840d5ca38ce`.
@@ -30,7 +32,10 @@ mismatched destinations, owned-invalid DTOs and invalid credentials. Every denia
 compares complete business records for both organizations. Denied writes were zero.
 The inconsistent-parent fixture uses the requested profile on the message while
 its conversation belongs to another profile, so the test independently exercises
-the conversation-parent predicate for all three routes and both credentials.
+the conversation-parent predicate for all three routes and both credentials. Its
+quoted-text requests target that inconsistent conversation's JID, leaving parent
+containment as the only reason for rejection. A separate test retains destination-
+mismatch coverage.
 
 Success checks compare complete responses, persisted content/local quote links,
 derived conversations and provider IDs. Mock text acknowledgements reach terminal
