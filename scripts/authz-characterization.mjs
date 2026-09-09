@@ -1307,9 +1307,13 @@ try {
     for (const [_credentialName, credential] of referenceCredentials) {
       for (const referenceId of [messageA2.id, messageB.id, crypto.randomUUID(),
         referenceInconsistentMessage.id]) {
+        const requestBase = route.name === 'text'
+          && referenceId === referenceInconsistentMessage.id
+          ? { ...route.base, to: conversationA2.jid }
+          : route.base;
         await requestWithoutBusinessWrites({ method: 'POST',
           route: `/api/v1/messages/${route.name}`, credential,
-          body: { profileId: profileA1, ...route.base, [route.field]: referenceId },
+          body: { profileId: profileA1, ...requestBase, [route.field]: referenceId },
           expectedStatus: 404, label: `${route.name} denied reference`,
           organizationIds: referenceOrganizations });
         referenceDenials++;
