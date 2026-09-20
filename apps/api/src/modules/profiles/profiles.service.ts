@@ -1,3 +1,4 @@
+import { readConnectionAlert } from './connection-alert';
 // MultiWA Gateway API - Profiles Service
 // apps/api/src/modules/profiles/profiles.service.ts
 
@@ -185,6 +186,7 @@ export class ProfilesService {
       phone: profile.phoneNumber,
       lastConnectedAt: profile.lastConnectedAt,
       engineConnected: engineStatus.isConnected,
+      connectionAlert: profile.status === 'disconnected' ? readConnectionAlert(profile.settings) : null,
       engine: resolveProfileEngineType(profile.settings),
       dntOperationsAccess: profile.dntOperationsAccess,
     };

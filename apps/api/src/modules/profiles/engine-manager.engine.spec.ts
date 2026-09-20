@@ -270,3 +270,54 @@ describe('EngineManagerService engine selection', () => {
     }));
   });
 });
+
+describe('reconnect restrictions and operator pause', () => {
+  function manager() {
+    return new EngineManagerService({ emitConnectionStatus: vi.fn(), emitQrUpdate: vi.fn(), getCachedQr: vi.fn() } as any,
+      {} as any, {} as any, {} as any, {} as any);
+  }
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.profile.findUnique).mockResolvedValue({ id: 'paused-profile', settings: { engine: 'baileys' }, sessionData: null } as any);
+    vi.mocked(prisma.profile.update).mockResolvedValue({} as any);
+    engine.initialize.mockResolvedValue(undefined);engine.connect.mockResolvedValue(undefined);engine.destroy.mockResolvedValue(undefined);
+  });
+  it('does not reconnect after forbidden and retains credentials', async () => {
+    const service = manager();await service.connectProfile('paused-profile');
+    const config = engine.initialize.mock.calls.at(-1)![0];
+    await config.onDisconnected('Forbidden');
+    expect(createEngine).toHaveBeenCalledTimes(1);
+    expect(prisma.profile.update).toHaveBeenLastCalledWith({ where: { id: 'paused-profile' }, data: { status: 'disconnected' } });
+    expect(vi.mocked(prisma.profile.update).mock.calls.some(([arg]) => arg.data.sessionData === null)).toBe(false);
+  });
+  it('manual disconnect cancels an already waiting retry and stale ready callback', async () => {
+    vi.useFakeTimers();
+    try {
+      const service = manager();await service.connectProfile('paused-profile');
+      const config = engine.initialize.mock.calls.at(-1)![0];
+      const retry = config.onDisconnected('Connection Failure');
+      await vi.advanceTimersByTimeAsync(1);
+      await service.disconnectProfile('paused-profile');
+      const writes = vi.mocked(prisma.profile.update).mock.calls.length;
+      await config.onReady('synthetic-phone','Synthetic');
+      await vi.advanceTimersByTimeAsync(60000);await retry;
+      expect(createEngine).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(prisma.profile.update).mock.calls.length).toBe(writes);
+    } finally { vi.useRealTimers(); }
+  });
+  it('three retries remain bounded across newly created sockets', async () => {
+    vi.useFakeTimers();
+    try {
+      const service = manager();await service.connectProfile('paused-profile');
+      for (const delay of [5000,15000,45000]) {
+        const config = engine.initialize.mock.calls.at(-1)![0];
+        const retry = config.onDisconnected('Connection Failure');
+        await vi.advanceTimersByTimeAsync(delay + 1);await retry;
+      }
+      await engine.initialize.mock.calls.at(-1)![0].onDisconnected('Connection Failure');
+      await vi.advanceTimersByTimeAsync(120000);
+      expect(createEngine).toHaveBeenCalledTimes(4);
+      expect(prisma.profile.update).toHaveBeenLastCalledWith({ where: { id: 'paused-profile' }, data: { status: 'disconnected' } });
+    } finally { vi.useRealTimers(); }
+  });
+});

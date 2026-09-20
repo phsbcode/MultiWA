@@ -21,6 +21,7 @@ import {
 } from './message-type-filter';
 import { resolveSenderIdentity } from './sender-identity';
 import { resolveProfileEngineType } from './profile-engine';
+import { connectionAlertCode, recordConnectionAlert } from './connection-alert';
 import { applyMessageAck } from '../messages/ack-status';
 
 
@@ -39,6 +40,7 @@ function jsonObject(value: unknown): Record<string, any> {
 @Injectable()
 export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   private readonly logger = new Logger(EngineManagerService.name);
+  private connectionCycles = new Map<string, { generation: number; retries: number; paused: boolean }>();
   private engines = new Map<string, EngineInstance>();
   private processingInboundMessageKeys = new Set<string>();
 
@@ -113,7 +115,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       // persisted status. Deliberately disconnected profiles are excluded.
       const profiles = await prisma.profile.findMany({
         where: { id: { in: profileIds } },
-        select: { id: true, displayName: true, lastConnectedAt: true },
+        select: { id: true, displayName: true, lastConnectedAt: true, sessionData: true },
       });
 
       let reconnectedCount = 0;
@@ -126,7 +128,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         // cleanupStaleLockFiles() deletes the entire .wwebjs_auth dir.  The MultiDevice
         // auth state is re-established transparently by whatsapp-web-js when the engine
         // connects, so a simple directory existence check is sufficient.
-        let hasSession = false;
+        let hasSession = Boolean(profile.sessionData);
         try {
           await fs.access(sessionDir);
           hasSession = true;
@@ -249,8 +251,26 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   /**
    * Initialize and connect a WhatsApp engine for a profile
    */
-  async connectProfile(profileId: string): Promise<{ status: string; message: string }> {
+  async connectProfile(profileId: string, retryGeneration?: number): Promise<{ status: string; message: string }> {
     this.logger.log(`Connecting profile: ${profileId}`);
+
+    let cycle = this.connectionCycles.get(profileId);
+    if (retryGeneration !== undefined) {
+      if (!cycle || cycle.paused || cycle.generation !== retryGeneration) {
+        return { status: 'disconnected', message: 'Connection attempt cancelled' };
+      }
+      cycle = { ...cycle };
+      this.connectionCycles.set(profileId, cycle);
+    } else {
+      const active = this.engines.get(profileId);
+      if (active?.status === 'connected') return { status: 'already_connected', message: 'Profile already connected' };
+      if (active?.status === 'connecting') return { status: 'connecting', message: 'Connection already in progress' };
+      cycle = { generation: (cycle?.generation || 0) + 1, retries: 0, paused: false };
+      this.connectionCycles.set(profileId, cycle);
+    }
+    let disconnectHandled = false;
+    const generation = cycle.generation;
+    const current = () => this.connectionCycles.get(profileId) === cycle && !cycle.paused;
 
     // Check if already connected
     const existing = this.engines.get(profileId);
@@ -278,11 +298,18 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       throw new Error('Profile not found');
     }
 
+    if (!current()) return { status: 'disconnected', message: 'Connection attempt cancelled' };
+
     // Update status to connecting
     await prisma.profile.update({
       where: { id: profileId },
       data: { status: 'connecting' },
     });
+
+    if (!current()) {
+      await prisma.profile.update({ where: { id: profileId }, data: { status: 'disconnected' } });
+      return { status: 'disconnected', message: 'Connection attempt cancelled' };
+    }
 
     // Create engine config with callbacks
     const sessionsBase = process.env.SESSIONS_DIR || './sessions';
@@ -299,7 +326,14 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     const engineConfig: EngineConfig = {
       profileId,
       sessionDir,
+      authStore: engineType === 'baileys' ? {
+        read: async () => (await prisma.profile.findUnique({ where: { id: profileId }, select: { sessionData: true } }))?.sessionData || null,
+        write: async value => {
+          await prisma.profile.update({ where: { id: profileId }, data: { sessionData: value } });
+        },
+      } : undefined,
       onQR: async (qr: string) => {
+        if (!current()) return;
         this.logger.log(`QR code received for profile ${profileId}`);
         
         try {
@@ -320,6 +354,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         }
       },
       onReady: async (phone: string, pushName: string) => {
+        if (!current()) return;
+        cycle.retries = 0;
+        try { await recordConnectionAlert(profileId, null); } catch { this.logger.warn('Connection alert storage unavailable'); }
         this.logger.log(`Profile ${profileId} connected: ${phone} (${pushName})`);
         
         // Update engine instance status
@@ -349,6 +386,8 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         ).catch(err => this.logger.warn(`Notification error (connection): ${err.message}`));
       },
       onDisconnected: async (reason: string) => {
+        if (!current() || disconnectHandled) return;
+        disconnectHandled = true;
         this.logger.log(`Profile ${profileId} disconnected: ${reason}`);
         
         // Update engine instance status
@@ -357,81 +396,38 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           instance.status = 'disconnected';
         }
 
-        // Only clear session folder for actual session invalidation (logged out, expired)
-        // Do NOT clear for temporary errors like 'Stream Errored' or 'Connection Failure'
-        // as these may recover on reconnect
-        const sessionInvalidReasons = ['Session Expired', 'Logged Out', 'loggedOut'];
-        const isSessionInvalid = sessionInvalidReasons.some(r => reason.includes(r));
-        
-        if (isSessionInvalid) {
-          this.logger.warn(`Session invalidated for ${profileId}, clearing session folder for fresh QR`);
-          try {
+        const terminal = /Forbidden|Connection Replaced|Multidevice Mismatch|Bad Session|Auth Storage Unavailable|Session Expired|Session expired|Logged Out|loggedOut/i.test(reason);
+        if (terminal || cycle.retries >= 3) {
+          cycle.paused = true;
+          try { await recordConnectionAlert(profileId, connectionAlertCode(reason, cycle.retries >= 3)); } catch { this.logger.warn('Connection alert storage unavailable'); }
+          await prisma.profile.update({ where: { id: profileId }, data: { status: 'disconnected' } });
+          await instance?.engine.destroy?.();
+          this.engines.delete(profileId);
+          // Preserve credentials on restrictions and transport failures. A logged-out
+          // session must be explicitly paired again; do not repeatedly reconnect it.
+          if (/Logged Out|loggedOut/.test(reason)) {
             const fs = await import('fs/promises');
             await fs.rm(sessionDir, { recursive: true, force: true });
-            this.logger.log(`Session folder cleared for ${profileId}`);
-          } catch (err) {
-            this.logger.error(`Failed to clear session folder:`, err);
+            await prisma.profile.update({ where: { id: profileId }, data: { sessionData: null } });
           }
-          
-          // Update database
-          await prisma.profile.update({
-            where: { id: profileId },
-            data: { status: 'disconnected' },
-          });
+          await prisma.profile.update({ where: { id: profileId }, data: { status: 'disconnected' } });
           this.eventsGateway.emitConnectionStatus(profileId, 'disconnected');
-
-          // === Notification: session invalidated ===
-          this.notifyOrgUsers(profileId, NotificationType.DISCONNECTION,
-            '⚠️ Profile Disconnected',
-            `${profile.displayName || profileId} was disconnected: ${reason}`,
-            { profileId, reason },
-          ).catch(err => this.logger.warn(`Notification error (disconnection): ${err.message}`));
-        } else {
-
-          // Temporary disconnect — attempt auto-retry with exponential backoff
-          const maxRetries = 3;
-          const baseDelay = 5000; // 5 seconds
-          
-          // Clean up the failed engine instance first
-          try {
-            await instance?.engine?.destroy?.();
-          } catch (e) {
-            this.logger.warn(`Error destroying engine before retry: ${(e as Error).message}`);
-          }
-          this.engines.delete(profileId);
-
-          for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            const delay = baseDelay * Math.pow(3, attempt - 1); // 5s, 15s, 45s
-            this.logger.log(`Auto-retry ${attempt}/${maxRetries} for ${profileId} in ${delay / 1000}s (reason: ${reason})`);
-            
-            // Emit reconnecting status so frontend shows progress
-            await prisma.profile.update({
-              where: { id: profileId },
-              data: { status: 'connecting' },
-            });
-            this.eventsGateway.emitConnectionStatus(profileId, `reconnecting (${attempt}/${maxRetries})`);
-            
-            await new Promise(resolve => setTimeout(resolve, delay));
-            
-            try {
-              const result = await this.connectProfile(profileId);
-              if (result.status === 'connecting' || result.status === 'already_connected') {
-                this.logger.log(`Auto-retry successful for ${profileId} on attempt ${attempt}`);
-                return; // Success, exit the retry loop
-              }
-            } catch (retryErr: any) {
-              this.logger.warn(`Auto-retry attempt ${attempt}/${maxRetries} failed for ${profileId}: ${retryErr.message}`);
-            }
-          }
-          
-          // All retries exhausted
-          this.logger.error(`All ${maxRetries} auto-retry attempts failed for ${profileId}`);
-          await prisma.profile.update({
-            where: { id: profileId },
-            data: { status: 'disconnected' },
-          });
-          this.eventsGateway.emitConnectionStatus(profileId, 'disconnected');
+          return;
         }
+
+        cycle.retries++;
+        const delay = 5000 * Math.pow(3, cycle.retries - 1);
+        await instance?.engine.destroy?.();
+        this.engines.delete(profileId);
+        if (!current()) return;
+        await prisma.profile.update({ where: { id: profileId }, data: { status: 'connecting' } });
+        this.eventsGateway.emitConnectionStatus(profileId, `reconnecting (${cycle.retries}/3)`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        if (!current()) return;
+        // A newly created socket is not a successful connection. Only onReady
+        // resets the profile-wide attempt budget.
+        await this.connectProfile(profileId, generation);
+
       },
       onMessage: async (message: any) => {
         // Skip bot's own messages to prevent reply loops
@@ -1049,6 +1045,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     
     try {
       await engine.initialize(engineConfig);
+      if (!current()) {
+        await engine.destroy?.();
+        return { status: 'disconnected', message: 'Connection attempt cancelled' };
+      }
       
       // Store engine instance
       this.engines.set(profileId, {
@@ -1068,6 +1068,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       const connectWithTimeout = engine.connect().then(
         () => this.logger.log(`Engine connect completed for ${profileId}`),
         async (error) => {
+          if (!current()) return;
           this.logger.error(`Engine connect failed for ${profileId}:`, error);
 
           try {
@@ -1097,6 +1098,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       );
 
       const timeoutId = setTimeout(() => {
+        if (!current() || this.engines.get(profileId)?.engine !== engine) return;
         this.logger.warn(`Engine connect timed out after 60s for ${profileId}, but engine is still connecting in background`);
         this.eventsGateway.emitConnectionStatus(profileId, 'connecting');
       }, connectTimeout);
@@ -1121,6 +1123,11 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
    */
   async disconnectProfile(profileId: string): Promise<{ status: string }> {
     this.logger.log(`Disconnecting profile: ${profileId}`);
+    const cycle = this.connectionCycles.get(profileId);
+    if (cycle) cycle.paused = true;
+    this.connectionCycles.set(profileId, { generation: (cycle?.generation || 0) + 1, retries: 0, paused: true });
+    try { await recordConnectionAlert(profileId, 'MANUAL_PAUSE'); } catch { this.logger.warn('Connection alert storage unavailable'); }
+    await prisma.profile.update({ where: { id: profileId }, data: { status: 'disconnected' } });
 
     const instance = this.engines.get(profileId);
     
@@ -1138,7 +1145,6 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       where: { id: profileId },
       data: { 
         status: 'disconnected',
-        sessionData: null,
       },
     });
 

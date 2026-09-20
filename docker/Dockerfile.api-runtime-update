@@ -1,0 +1,9 @@
+# Build context must contain only api/, engines/ and this Dockerfile.
+# Dependencies and Prisma schema must match the explicitly retained base image.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY api/ /app/apps/api/dist/
+COPY engines/ /app/packages/engines/dist/
+WORKDIR /app/apps/api
+ENTRYPOINT ["node", "dist/main.js"]
+CMD []

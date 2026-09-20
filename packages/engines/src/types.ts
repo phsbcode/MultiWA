@@ -5,7 +5,13 @@ import type { PresenceUpdate } from './presence';
 
 export type EngineType = 'whatsapp-web-js' | 'baileys' | 'mock';
 
+export interface EngineAuthStore {
+  read(): Promise<string | null>;
+  write(value: string): Promise<void>;
+}
+
 export interface EngineConfig {
+  authStore?: EngineAuthStore;
   profileId: string;
   sessionDir?: string;
   puppeteerOptions?: {

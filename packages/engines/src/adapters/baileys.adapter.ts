@@ -3,14 +3,13 @@
 
 import makeWASocket, {
   DisconnectReason,
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   downloadMediaMessage,
   proto,
 } from '@whiskeysockets/baileys';
+import { createBaileysAuthState } from './baileys-auth-store';
+import type { GroupMetadata } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
-import * as qrcode from 'qrcode-terminal';
 import type {
   IWhatsAppEngine,
   EngineConfig,
@@ -38,6 +37,8 @@ import { decryptBaileysSecretEdit } from './baileys-secret-edit';
 
 export class BaileysAdapter implements IWhatsAppEngine {
   readonly engineType = 'baileys' as const;
+  private groupMetadataCache = new Map<string, { value: GroupMetadata; expires: number }>();
+  private groupMetadataRequests = new Map<string, Promise<GroupMetadata>>();
 
   private socket: ReturnType<typeof makeWASocket> | null = null;
   private config: EngineConfig | null = null;
@@ -49,7 +50,6 @@ export class BaileysAdapter implements IWhatsAppEngine {
   private qrCallbacks: ((qr: string) => void)[] = [];
   private authState: any = null;
   private connectionRetryCount: number = 0;
-  private maxConnectionRetries: number = 3;
   private isDestroying = false;
   private phoneNumberShares = new Map<string, string>();
   private messageCache = new Map<string, proto.IWebMessageInfo>();
@@ -136,7 +136,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
       try {
         let groups: Record<string, any> = {};
         if (groupJid?.endsWith('@g.us') && this.socket.groupMetadata) {
-          groups[groupJid] = await this.socket.groupMetadata(groupJid);
+          groups[groupJid] = await this.cachedGroupMetadata(groupJid);
         } else if (this.socket.groupFetchAllParticipating) {
           groups = await this.socket.groupFetchAllParticipating();
         }
@@ -219,8 +219,8 @@ export class BaileysAdapter implements IWhatsAppEngine {
     const sessionDir = config.sessionDir || `./sessions/${config.profileId}`;
 
     // Load auth state
-    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-    this.authState = { state, saveCreds };
+    if (!config.authStore) throw new Error('A durable Baileys auth store is required');
+    this.authState = await createBaileysAuthState(config.authStore, sessionDir);
   }
 
   async connect(): Promise<void> {
@@ -228,11 +228,10 @@ export class BaileysAdapter implements IWhatsAppEngine {
       throw new Error('Not initialized. Call initialize() first.');
     }
 
-    const { version } = await fetchLatestBaileysVersion();
-    console.log(`[Baileys] Using WA version ${version.join('.')}`);
-
     this.socket = makeWASocket({
-      version,
+      markOnlineOnConnect: false,
+      syncFullHistory: false,
+      cachedGroupMetadata: jid => this.cachedGroupMetadata(jid),
       auth: {
         creds: this.authState.state.creds,
         keys: makeCacheableSignalKeyStore(
@@ -260,7 +259,6 @@ export class BaileysAdapter implements IWhatsAppEngine {
       if (qr) {
         console.log(`[Baileys] QR Code received for profile ${this.config?.profileId}`);
         this.currentQR = qr;
-        qrcode.generate(qr, { small: true });
         this.qrCallbacks.forEach((cb) => cb(qr));
         this.config?.onQR?.(qr);
       }
@@ -272,57 +270,11 @@ export class BaileysAdapter implements IWhatsAppEngine {
         const disconnectReason = normalizeBaileysDisconnectReason(
           isLoggedOut,
           lastDisconnect?.error?.message,
+          statusCode,
         );
-        const isConnectionFailure = disconnectReason.includes('Connection Failure');
-
-        console.log(
-          `[Baileys] Connection closed for profile ${this.config?.profileId}. StatusCode: ${statusCode}, Retry count: ${this.connectionRetryCount}`
-        );
-
         this.status = { isConnected: false, isAuthenticated: false };
-
-        // A 401 is Baileys' logged-out signal. Treating its generic
-        // "Connection Failure" message as temporary recreates the adapter
-        // with the same rejected credentials forever, so a fresh QR is never
-        // emitted. EngineManager owns credential cleanup for "Logged Out".
-        if (isLoggedOut) {
-          this.connectionRetryCount = 0;
-          this.config?.onDisconnected?.(disconnectReason);
-          return;
-        }
-
-        // Check if session might be stale (multiple connection failures)
-        if (isConnectionFailure) {
-          this.connectionRetryCount++;
-          
-          if (this.connectionRetryCount >= this.maxConnectionRetries) {
-            console.log(`[Baileys] Max retries (${this.maxConnectionRetries}) reached for profile ${this.config?.profileId}. Clearing stale session...`);
-            
-            // Clear session folder to force fresh QR code
-            const sessionDir = this.config?.sessionDir || `./sessions/${this.config?.profileId}`;
-            try {
-              const fs = require('fs');
-              const path = require('path');
-              const files = fs.readdirSync(sessionDir);
-              for (const file of files) {
-                fs.unlinkSync(path.join(sessionDir, file));
-              }
-              console.log(`[Baileys] Session cleared for profile ${this.config?.profileId}. Will generate new QR code.`);
-            } catch (err: any) {
-              console.error(`[Baileys] Failed to clear session: ${err.message}`);
-            }
-            
-            this.connectionRetryCount = 0;
-            // Notify disconnect - user needs to reconnect with fresh QR
-            this.config?.onDisconnected?.('Session expired. Please reconnect.');
-            return;
-          }
-        } else {
-          // Reset retry count on different error types
-          this.connectionRetryCount = 0;
-        }
-
         this.config?.onDisconnected?.(disconnectReason);
+
 
         // EngineManager owns retry/backoff. Keeping a second reconnect loop in
         // the adapter creates overlapping sockets and rapidly invalidates QRs.
@@ -347,7 +299,18 @@ export class BaileysAdapter implements IWhatsAppEngine {
     });
 
     // Credentials update
-    this.socket.ev.on('creds.update', this.authState.saveCreds);
+    this.socket.ev.on('creds.update', () => {
+      this.authState.saveCreds().catch(async () => {
+        await this.destroy();
+        this.config?.onDisconnected?.('Auth Storage Unavailable');
+      });
+    });
+    this.socket.ev.on('groups.update', updates => {
+      for (const update of updates) if (update.id) this.invalidateGroupMetadata(update.id);
+    });
+    this.socket.ev.on('group-participants.update', update => {
+      this.invalidateGroupMetadata(update.id);
+    });
 
     this.socket.ev.on('presence.update', update => {
       for (const presence of normalizeBaileysPresenceUpdate(update)) {
@@ -507,6 +470,29 @@ export class BaileysAdapter implements IWhatsAppEngine {
     });
   }
 
+  private invalidateGroupMetadata(jid: string): void {
+    this.groupMetadataCache.delete(jid);
+    this.groupMetadataRequests.delete(jid);
+  }
+
+  private async cachedGroupMetadata(jid: string): Promise<GroupMetadata> {
+    const cached = this.groupMetadataCache.get(jid);
+    if (cached && cached.expires > Date.now()) return cached.value;
+    const pending = this.groupMetadataRequests.get(jid);
+    if (pending) return pending;
+    if (!this.socket) throw new Error('WhatsApp socket is not connected');
+    const request = this.socket.groupMetadata(jid).then(value => {
+      if (this.groupMetadataRequests.get(jid) !== request || this.isDestroying) return value;
+      if (this.groupMetadataCache.size >= 500) this.groupMetadataCache.delete(this.groupMetadataCache.keys().next().value);
+      this.groupMetadataCache.set(jid, { value, expires: Date.now() + 300000 });
+      return value;
+    }).finally(() => {
+      if (this.groupMetadataRequests.get(jid) === request) this.groupMetadataRequests.delete(jid);
+    });
+    this.groupMetadataRequests.set(jid, request);
+    return request;
+  }
+
   async disconnect(): Promise<void> {
     this.isDestroying = true;
     if (this.socket) {
@@ -517,10 +503,15 @@ export class BaileysAdapter implements IWhatsAppEngine {
 
   async destroy(): Promise<void> {
     this.isDestroying = true;
+    this.groupMetadataCache.clear();
+    this.groupMetadataRequests.clear();
     if (this.socket) {
       this.socket.end(undefined);
       this.socket = null;
       this.status = { isConnected: false, isAuthenticated: false };
+    }
+    if (this.authState?.flush) {
+      try { await this.authState.flush(); } catch { /* The failed auth store already stops the profile. */ }
     }
   }
 
@@ -877,7 +868,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
       if (!this.isReady() || !this.socket) {
         throw new Error('Client not ready');
       }
-      const metadata = await this.socket.groupMetadata(groupId);
+      const metadata = await this.cachedGroupMetadata(groupId);
       return {
         id: metadata.id,
         name: metadata.subject || '',

@@ -21,3 +21,9 @@ describe('Baileys lifecycle', () => {
     expect(normalizeBaileysDisconnectReason(false, 'Connection Failure')).toBe('Connection Failure');
   });
 });
+
+it('retains explicit forbidden and replaced-session reasons despite generic provider messages', () => {
+  expect(normalizeBaileysDisconnectReason(false, 'Connection Failure', 403)).toBe('Forbidden');
+  expect(normalizeBaileysDisconnectReason(false, 'Connection Failure', 440)).toBe('Connection Replaced');
+  expect(normalizeBaileysDisconnectReason(false, 'Timed Out', 408)).toBe('Timed Out');
+});
