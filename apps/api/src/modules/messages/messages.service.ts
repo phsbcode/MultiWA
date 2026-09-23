@@ -434,13 +434,36 @@ export class MessagesService {
     }
     const requested = [...new Set(jids.map(value => String(value || '').trim()).filter(value =>
       value.toLowerCase().slice(-4) === '@' + 'lid'))];
-    const engine = this.engineManager.getEngine(profileId);
-    if (!engine?.resolvePhoneJids || !requested.length) return { phones: {} };
-    const mapped = await engine.resolvePhoneJids(requested);
     const phones: Record<string, string> = {};
-    for (const jid of requested) {
-      const phone = String(mapped[jid] || '').split('@')[0].split(':')[0].replace(/\D/g, '');
-      if (/^\d{7,15}$/.test(phone)) phones[jid] = phone;
+    if (!requested.length) return { phones };
+    const history = await prisma.message.findMany({
+      where: { profileId, OR: requested.map(jid => ({ metadata: { path: ['originalSenderJid'], equals: jid } })) },
+      select: { senderJid: true, metadata: true },
+      orderBy: { timestamp: 'desc' },
+      take: 1001,
+    });
+    const candidates = new Map<string, Set<string>>();
+    // A capped result cannot prove uniqueness. Fall back without guessing.
+    if (history.length <= 1000) for (const message of history) {
+      const identity = (message.metadata as any)?.originalSenderJid;
+      const match = /^([0-9]{7,15})(?::[0-9]+)?@(s\.whatsapp\.net|c\.us)$/.exec(message.senderJid || '');
+      if (!requested.includes(identity) || !match) continue;
+      const values = candidates.get(identity) || new Set<string>();
+      values.add(match[1]);candidates.set(identity, values);
+    }
+    for (const [identity, values] of candidates) {
+      if (values.size === 1) phones[identity] = [...values][0];
+    }
+    const unresolved = requested.filter(jid => !phones[jid] && !candidates.has(jid));
+    if (unresolved.length) {
+      const engine = this.engineManager.getEngine(profileId);
+      if (engine?.resolvePhoneJids) {
+        const mapped = await engine.resolvePhoneJids(unresolved);
+        for (const jid of unresolved) {
+          const match = /^([0-9]{7,15})(?::[0-9]+)?@(s\.whatsapp\.net|c\.us)$/.exec(String(mapped[jid] || ''));
+          if (match) phones[jid] = match[1];
+        }
+      }
     }
     return { phones };
   }

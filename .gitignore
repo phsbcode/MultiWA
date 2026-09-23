@@ -9,3 +9,5 @@ dist/
 .turbo/
 tsconfig.tsbuildinfo
 *.tsbuildinfo
+# Local webhook state may contain delivery IDs or signing secrets
+apps/api/data/

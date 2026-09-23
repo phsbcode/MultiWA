@@ -48,12 +48,20 @@ export interface HookRegistration {
 export class HooksService implements OnModuleInit {
   private readonly logger = new Logger(HooksService.name);
   private hooks: HookRegistration[] = [];
+  private pendingPaymentFailures: Array<{hookId: string; profileId: string;
+    messageId: string; conversationId: string; chatJid: string;
+    failureCode: string; at: string}> = [];
+  private paymentFailureFlushRunning = false;
 
   constructor(private readonly eventEmitter: EventEmitter2) {}
 
   async onModuleInit() {
     await this.loadHooks();
     this.logger.log(`Hooks service initialized with ${this.hooks.length} registered webhook(s)`);
+    await this.loadPaymentFailures();
+    const retryTimer = setInterval(() => { void this.flushPaymentFailures(); }, 300000);
+    retryTimer.unref();
+    void this.flushPaymentFailures();
   }
 
   /**
@@ -115,6 +123,115 @@ export class HooksService implements OnModuleInit {
     return [...this.hooks];
   }
 
+  private paymentTraceHook(hook: HookRegistration): boolean {
+    return hook.signatureInBody === true &&
+      /^https:\/\/script\.google\.com\//.test(hook.url);
+  }
+
+  private async failureFile(): Promise<string> {
+    const path = await import('node:path');
+    return path.resolve(process.cwd(), 'data', 'payment-hook-alerts.json');
+  }
+  private async loadPaymentFailures(): Promise<void> {
+    try {
+      const fs = await import('node:fs');
+      const value = JSON.parse(fs.readFileSync(await this.failureFile(), 'utf8'));
+      this.pendingPaymentFailures = Array.isArray(value) ? value.slice(-500) : [];
+    } catch { this.pendingPaymentFailures = []; }
+  }
+  private async savePaymentFailures(): Promise<void> {
+    try {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const file = await this.failureFile();
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file + '.tmp', JSON.stringify(this.pendingPaymentFailures), { mode: 0o600 });
+      fs.renameSync(file + '.tmp', file);
+    } catch { this.logger.warn('Payment delivery alert backlog could not be stored'); }
+  }
+  private async queuePaymentFailure(hook: HookRegistration, payload: any,
+    failureCode: string): Promise<void> {
+    if (!this.paymentTraceHook(hook) || payload?.isGroup !== true ||
+        !/^[A-Za-z0-9_-]{5,220}$/.test(String(payload?.messageId || ''))) return;
+    const item = { hookId: hook.id, profileId: String(payload.profileId || ''),
+      messageId: String(payload.messageId), conversationId: String(payload.conversationId || ''),
+      chatJid: String(payload.chatJid || ''), failureCode, at: new Date().toISOString() };
+    if (!this.pendingPaymentFailures.some(row => row.hookId === item.hookId &&
+        row.messageId === item.messageId && row.failureCode === item.failureCode)) {
+      this.pendingPaymentFailures.push(item);
+      if (this.pendingPaymentFailures.length > 500) {
+        this.pendingPaymentFailures.shift();
+        this.logger.error('Payment delivery alert backlog exceeded 500 entries');
+      }
+      await this.savePaymentFailures();
+    }
+    await this.flushPaymentFailures();
+  }
+  private async flushPaymentFailures(): Promise<void> {
+    if (this.paymentFailureFlushRunning || !this.pendingPaymentFailures.length) return;
+    this.paymentFailureFlushRunning = true;
+    try {
+      for (const item of this.pendingPaymentFailures.slice(0, 5)) {
+        const hook = this.hooks.find(row => row.id === item.hookId &&
+          row.active && this.paymentTraceHook(row)) || this.hooks.find(row =>
+          row.active && this.paymentTraceHook(row));
+        if (!hook?.secret) break;
+        const timestamp = new Date().toISOString();
+        const envelope = { event: 'delivery.failed', timestamp, data: {
+          profileId: item.profileId, messageId: item.messageId, isGroup: true,
+          conversationId: item.conversationId, chatJid: item.chatJid,
+          failureCode: item.failureCode, timestamp,
+        } };
+        const crypto = await import('node:crypto');
+        const signature = crypto.createHmac('sha256', hook.secret)
+          .update(JSON.stringify(envelope)).digest('hex');
+        try {
+          const response = await fetch(hook.url, { method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...envelope, signature: `sha256=${signature}` }),
+            signal: AbortSignal.timeout(10000) });
+          const receipt = JSON.parse((await response.text()).slice(0, 2048));
+          if (!response.ok || receipt.ok !== true || receipt.reported !== true) break;
+          this.pendingPaymentFailures = this.pendingPaymentFailures.filter(row => row !== item);
+          await this.savePaymentFailures();
+        } catch { break; }
+      }
+    } finally { this.paymentFailureFlushRunning = false; }
+  }
+
+  private async recordPaymentDelivery(hook: HookRegistration, event: string, payload: any,
+    status: number, responseBody: string, transportFailure = false): Promise<void> {
+    // Only the signed Apps Script receiver is traced. Raw payloads and signatures stay out.
+    if (!this.paymentTraceHook(hook)) return;
+    try {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const messageId = String(payload?.messageId || '').trim();
+      if (!/^[A-Za-z0-9_-]{5,220}$/.test(messageId)) return;
+      let receipt: Record<string, unknown> = {};
+      try { receipt = JSON.parse(responseBody.slice(0, 2048)); } catch {}
+      const code = String(receipt.code || '');
+      const knownCode = ['DISABLED', 'BODY', 'EVENT', 'SIGNATURE', 'STALE', 'PROFILE',
+        'MESSAGE', 'TRIGGER', 'LOCK', 'QUEUE'].includes(code) ? code : '';
+      const outcome = transportFailure ? 'transport_error' : status < 200 || status >= 300
+        ? 'http_error' : receipt.ok === false ? 'receiver_rejected'
+          : receipt.ok === true && receipt.accepted === true ? 'accepted' : 'unreadable_receipt';
+      const row = { at: new Date().toISOString(), messageId, hookId: hook.id, event,
+        httpStatus: status, outcome, receiverCode: knownCode,
+        queued: receipt.queued === true, duplicate: receipt.duplicate === true,
+        ignoredGroup: receipt.ignored === 'group_not_selected' };
+      const directory = path.resolve(process.cwd(), 'data');
+      fs.mkdirSync(directory, { recursive: true });
+      const file = path.join(directory, 'payment-hook-deliveries.jsonl');
+      if (fs.existsSync(file) && fs.statSync(file).size >= 5 * 1024 * 1024) {
+        fs.renameSync(file, file + '.previous');
+      }
+      fs.appendFileSync(file, JSON.stringify(row) + '\n', { mode: 0o600 });
+    } catch (error) {
+      this.logger.warn('Payment hook delivery trace could not be stored');
+    }
+  }
+
   /**
    * Dispatch event to all matching webhook URLs.
    */
@@ -125,13 +242,7 @@ export class HooksService implements OnModuleInit {
 
     if (matchingHooks.length === 0) return;
 
-    const envelope = {
-      event,
-      timestamp: new Date().toISOString(),
-      data: payload,
-    };
-    const unsignedBody = JSON.stringify(envelope);
-
+    const timestamp = new Date().toISOString();
     const promises = matchingHooks.map(async (hook) => {
       try {
         const headers: Record<string, string> = {
@@ -139,6 +250,17 @@ export class HooksService implements OnModuleInit {
           'X-Webhook-Event': event,
         };
 
+        // The payment receiver needs routing metadata, not the media data URL.
+        const paymentHook = hook.signatureInBody &&
+          /^https:\/\/script\.google\.com\//.test(hook.url);
+        const data = paymentHook ? {
+          profileId: payload?.profileId, messageId: payload?.messageId,
+          type: payload?.type, timestamp: payload?.timestamp, isGroup: payload?.isGroup,
+          conversationId: payload?.conversationId, chatJid: payload?.chatJid,
+          groupName: payload?.groupName,
+        } : payload;
+        const envelope = { event, timestamp, data };
+        const unsignedBody = JSON.stringify(envelope);
         // HMAC signing if secret is configured
         let signature = '';
         if (hook.secret) {
@@ -165,10 +287,25 @@ export class HooksService implements OnModuleInit {
             Math.min(60000, Number(hook.timeoutMs) || 10000))),
         });
 
+        if (this.paymentTraceHook(hook)) {
+          const receipt = await response.text();
+          await this.recordPaymentDelivery(hook, event, payload, response.status, receipt);
+          let parsed: Record<string, unknown> = {};
+          try { parsed = JSON.parse(receipt.slice(0, 2048)); } catch {}
+          if (!response.ok || parsed.ok === false && parsed.reported !== true ||
+              parsed.ok !== true && parsed.ok !== false) {
+            const code = !response.ok ? `HTTP_${response.status}` :
+              typeof parsed.code === 'string' && /^[A-Z_]{3,30}$/.test(parsed.code)
+                ? parsed.code : 'UNREADABLE';
+            await this.queuePaymentFailure(hook, payload, code);
+          }
+        }
         if (!response.ok) {
           this.logger.warn(`Webhook ${hook.url} returned ${response.status}`);
         }
       } catch (error: any) {
+        await this.recordPaymentDelivery(hook, event, payload, 0, '', true);
+        await this.queuePaymentFailure(hook, payload, 'TRANSPORT');
         this.logger.error(`Webhook ${hook.url} failed: ${error.message}`);
       }
     });
