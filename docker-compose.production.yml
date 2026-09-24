@@ -58,6 +58,7 @@ services:
 
   # ─── API Server ─────────────────────────────────
   api:
+    init: true
     build:
       context: .
       dockerfile: docker/Dockerfile.api
