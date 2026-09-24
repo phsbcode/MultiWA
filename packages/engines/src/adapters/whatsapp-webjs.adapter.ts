@@ -189,6 +189,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     // Message ACK
     this.client.on('message_ack', (message: any, ack: number) => {
       const statusMap: Record<number, string> = {
+        [-1]: 'failed',
         0: 'pending',
         1: 'sent',
         2: 'delivered',
