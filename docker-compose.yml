@@ -54,6 +54,7 @@ services:
 
   # ─── API Server (NestJS + WhatsApp Engine) ─
   api:
+    init: true
     build:
       context: .
       dockerfile: Dockerfile
