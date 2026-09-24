@@ -73,6 +73,7 @@ services:
   # API Service (NestJS with Chromium for whatsapp-web.js)
   # ==============================================
   api:
+    init: true
     build:
       context: .
       dockerfile: docker/Dockerfile.api
