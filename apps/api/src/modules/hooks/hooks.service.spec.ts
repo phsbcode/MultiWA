@@ -2,9 +2,19 @@ import { createHmac } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AppEvent, HooksService } from './hooks.service';
+
+let suiteDirectory: string;
+beforeEach(() => {
+  suiteDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'hooks-suite-'));
+  vi.spyOn(process, 'cwd').mockReturnValue(suiteDirectory);
+});
+afterEach(() => {
+  vi.restoreAllMocks();vi.unstubAllGlobals();
+  fs.rmSync(suiteDirectory,{recursive:true,force:true});
+});
 
 describe('HooksService signed envelopes', () => {
   it('mirrors the HMAC proof into the body for receivers that cannot read headers', async () => {
@@ -88,7 +98,7 @@ describe('Payment Review delivery trace', () => {
     expect(body).not.toContain('data:image/jpeg');
     expect(JSON.parse(body).data.messageId).toBe('message-test');
     expect(recorded).toHaveBeenCalledWith(hook,AppEvent.MESSAGE_RECEIVED,
-      expect.objectContaining({messageId:'message-test'}),200,JSON.stringify({ok:false,code:'BODY'}));
+      expect.objectContaining({messageId:'message-test'}),200,JSON.stringify({ok:false,code:'BODY'}),false,expect.objectContaining({finalStatus:200}));
   });
 
   it('stores only bounded delivery fields on the existing hook volume', async () => {

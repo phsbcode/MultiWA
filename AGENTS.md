@@ -80,6 +80,8 @@ When the user requests a durable behavior change, record it here or in the relev
 
 - After Docker build, rebuild, or image-testing work, remove unused build cache and disposable intermediate images. Preserve containers, volumes, active images, and explicitly retained rollback images; then verify container health and disk usage and report the recovered space.
 
+- MultiWA API rollback retention is one previous deployment. After verifying the active service and its immediate predecessor, remove older rollback containers and images that are not required by other containers. Preserve named volumes and unrelated stopped test containers/databases.
+
 ## Global Workflow Rules
 
 - MultiWA is a pnpm monorepo managed with Turborepo

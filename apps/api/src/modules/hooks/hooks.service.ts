@@ -3,6 +3,8 @@
 
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { PaymentHookDelivery, PaymentDeliveryDiagnostic } from './payment-hook-delivery';
+import * as path from 'node:path';
 
 /**
  * Standard event names used across the application.
@@ -52,6 +54,7 @@ export class HooksService implements OnModuleInit {
     messageId: string; conversationId: string; chatJid: string;
     failureCode: string; at: string}> = [];
   private paymentFailureFlushRunning = false;
+  private originalDelivery: PaymentHookDelivery;
 
   constructor(private readonly eventEmitter: EventEmitter2) {}
 
@@ -62,6 +65,9 @@ export class HooksService implements OnModuleInit {
     const retryTimer = setInterval(() => { void this.flushPaymentFailures(); }, 300000);
     retryTimer.unref();
     void this.flushPaymentFailures();
+    const deliveryTimer = setInterval(() => { void this.paymentDelivery().retryDue(); }, 60000);
+    deliveryTimer.unref();
+    void this.paymentDelivery().retryDue();
   }
 
   /**
@@ -121,6 +127,18 @@ export class HooksService implements OnModuleInit {
    */
   getHooks(): HookRegistration[] {
     return [...this.hooks];
+  }
+
+  private paymentDelivery(): PaymentHookDelivery {
+    if (!this.originalDelivery) this.originalDelivery = new PaymentHookDelivery({
+      directory: path.resolve(process.cwd(), 'data'),
+      hook: id => this.hooks.find(hook => hook.id === id && this.paymentTraceHook(hook)),
+      receipt: (hook, event, data, status, body, transport, diagnostic) => this.recordPaymentDelivery(
+        hook as HookRegistration, event, data, status, body, transport, diagnostic),
+      failure: (hook, data, code) => this.queuePaymentFailure(hook as HookRegistration, data, code),
+      storageError: () => this.logger.error('Payment intake retry storage needs attention'),
+    });
+    return this.originalDelivery;
   }
 
   private paymentTraceHook(hook: HookRegistration): boolean {
@@ -200,7 +218,7 @@ export class HooksService implements OnModuleInit {
   }
 
   private async recordPaymentDelivery(hook: HookRegistration, event: string, payload: any,
-    status: number, responseBody: string, transportFailure = false): Promise<void> {
+    status: number, responseBody: string, transportFailure = false, diagnostic?: PaymentDeliveryDiagnostic): Promise<void> {
     // Only the signed Apps Script receiver is traced. Raw payloads and signatures stay out.
     if (!this.paymentTraceHook(hook)) return;
     try {
@@ -218,6 +236,8 @@ export class HooksService implements OnModuleInit {
           : receipt.ok === true && receipt.accepted === true ? 'accepted' : 'unreadable_receipt';
       const row = { at: new Date().toISOString(), messageId, hookId: hook.id, event,
         httpStatus: status, outcome, receiverCode: knownCode,
+        deliveryId: /^[A-Za-z0-9_-]{5,120}$/.test(String(payload?.deliveryId || '')) ? payload.deliveryId : undefined,
+        transport: diagnostic,
         queued: receipt.queued === true, duplicate: receipt.duplicate === true,
         ignoredGroup: receipt.ignored === 'group_not_selected' };
       const directory = path.resolve(process.cwd(), 'data');
@@ -244,6 +264,10 @@ export class HooksService implements OnModuleInit {
 
     const timestamp = new Date().toISOString();
     const promises = matchingHooks.map(async (hook) => {
+      if (this.paymentTraceHook(hook) && payload?.isGroup === true &&
+          [AppEvent.MESSAGE_RECEIVED, AppEvent.MESSAGE_EDITED].includes(event as AppEvent)) {
+        return this.paymentDelivery().enqueue(hook, event, payload);
+      }
       try {
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',

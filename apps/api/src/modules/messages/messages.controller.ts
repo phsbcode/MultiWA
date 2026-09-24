@@ -177,6 +177,8 @@ export class MessagesController {
   @ApiQuery({ name: 'offset', required: false })
   @ApiQuery({ name: 'type', required: false, enum: ['text', 'image', 'video', 'audio', 'document', 'location', 'contact'] })
   @ApiQuery({ name: 'direction', required: false, enum: ['incoming', 'outgoing'] })
+  @ApiQuery({ name: 'conversationId', required: false,
+    description: 'Limit profile messages to one owned conversation' })
   @ApiQuery({ name: 'since', required: false, description: 'Return messages at or after this ISO timestamp' })
   @ApiQuery({ name: 'includeMedia', required: false, enum: ['true', 'false'],
     description: 'Set false to replace media payloads with fingerprints and byte sizes' })
@@ -186,6 +188,7 @@ export class MessagesController {
     @Query('offset') offset?: number,
     @Query('type') type?: string,
     @Query('direction') direction?: string,
+    @Query('conversationId') conversationId?: string,
     @Query('since') since?: string,
     @Query('includeMedia') includeMedia?: string,
   ) {
@@ -196,7 +199,7 @@ export class MessagesController {
     if (includeMedia !== undefined && includeMedia !== 'true' && includeMedia !== 'false') {
       throw new BadRequestException('includeMedia must be true or false');
     }
-    return this.service.findByProfile(profileId, { limit, offset, type, direction, since: sinceDate,
+    return this.service.findByProfile(profileId, { limit, offset, type, direction, conversationId, since: sinceDate,
       includeMedia: includeMedia !== 'false' });
   }
 

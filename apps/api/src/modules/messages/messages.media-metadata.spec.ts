@@ -27,6 +27,15 @@ describe('MessagesService media metadata reads', () => {
     } }));
   });
 
+  it('limits a profile scan to the requested conversation before serializing messages', async () => {
+    findMany.mockResolvedValue([]);
+    const service = new MessagesService({} as any);
+    await service.findByProfile('profile-1', { conversationId: 'conversation-1', includeMedia: false });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
+      profileId: 'profile-1', conversationId: 'conversation-1'
+    } }));
+  });
+
   it('retrieves full media only for bounded IDs inside the requested profile', async () => {
     findMany.mockResolvedValue([{ id: 'message-2', profileId: 'profile-1', content: { url: 'data:x' } },
       { id: 'message-1', profileId: 'profile-1', content: { url: 'data:y' } }]);
