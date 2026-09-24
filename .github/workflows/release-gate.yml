@@ -7,7 +7,7 @@ name: Release Gate
 
 on:
   push:
-    branches: [main, production]
+    branches: [main, production, 'test/upstream-reliability-2026-09']
   pull_request:
     branches: [main]
   workflow_dispatch:
