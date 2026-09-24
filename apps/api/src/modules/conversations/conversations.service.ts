@@ -38,7 +38,7 @@ export class ConversationsService {
     const [conversations, total] = await Promise.all([
       prisma.conversation.findMany({
         where,
-        take: options.limit || 50,
+        take: Math.min(Math.max(1, Math.floor(Number(options.limit) || 50)), 100),
         skip: options.offset || 0,
         orderBy: { lastMessageAt: 'desc' },
         include: {
@@ -150,6 +150,7 @@ export class ConversationsService {
 
   // Get conversation with recent messages
   async findOne(id: string, messageLimit = 50) {
+    messageLimit = Math.min(Math.max(1, Math.floor(Number(messageLimit) || 50)), 500);
     const conversation = await prisma.conversation.findUnique({
       where: { id },
       include: {
