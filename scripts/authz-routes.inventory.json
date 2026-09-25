@@ -4477,7 +4477,7 @@
           "location": "path",
           "name": "folder",
           "required": true,
-          "namespace": "group-jid-or-id",
+          "namespace": "scalar",
           "parent": ""
         },
         {
