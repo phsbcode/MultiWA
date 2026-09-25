@@ -4477,14 +4477,14 @@
           "location": "path",
           "name": "folder",
           "required": true,
-          "namespace": "storage-folder",
+          "namespace": "group-jid-or-id",
           "parent": ""
         },
         {
           "location": "path",
           "name": "name",
           "required": true,
-          "namespace": "unguessable-media-id",
+          "namespace": "scalar",
           "parent": ""
         }
       ],
