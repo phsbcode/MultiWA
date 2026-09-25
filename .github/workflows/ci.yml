@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, production, 'test/upstream-reliability-2026-09']
+    branches: [main, production]
   pull_request:
     branches: [main]
 
