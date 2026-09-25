@@ -4457,6 +4457,50 @@
       "notes": ""
     },
     {
+      "key": "GET /api/v1/uploads/file/:folder/:name",
+      "method": "GET",
+      "path": "/api/v1/uploads/file/:folder/:name",
+      "source": "apps/api/src/modules/uploads/media-file.controller.ts",
+      "controller": "MediaFileController",
+      "handler": "getFile",
+      "excludedFromPublicSnapshot": true,
+      "principals": [
+        "unauthenticated"
+      ],
+      "guards": [],
+      "tenantChecks": [],
+      "implementedAccess": "public",
+      "targetAccess": "public",
+      "status": "intentional-public",
+      "selectors": [
+        {
+          "location": "path",
+          "name": "folder",
+          "required": true,
+          "namespace": "scalar",
+          "parent": ""
+        },
+        {
+          "location": "path",
+          "name": "name",
+          "required": true,
+          "namespace": "scalar",
+          "parent": ""
+        }
+      ],
+      "ownershipEvidence": [
+        "apps/api/src/modules/uploads/media-file.controller.ts#getFile",
+        "Route is intentionally unauthenticated because whatsapp-web.js fetches media URLs without credentials.",
+        "Controller restricts folders, requires UUID-shaped filenames, and LocalStorageAdapter rejects path traversal."
+      ],
+      "sideEffect": "read-media",
+      "proposedPermission": "public",
+      "clients": [
+        "whatsapp-web.js"
+      ],
+      "notes": "Purpose-built transport route for outbound local media. Response uses nosniff, sandbox CSP, same-origin CORP and attachment disposition. This does not resolve the separate legacy STATIC /uploads/media/* decision-required inventory entry."
+    },
+    {
       "key": "GET /api/v1/webhooks",
       "method": "GET",
       "path": "/api/v1/webhooks",
