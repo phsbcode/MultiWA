@@ -11,6 +11,9 @@ export interface EngineAuthStore {
 }
 
 export interface EngineConfig {
+  investigationMode?: boolean;
+  /** False for automatic recovery: require retained MD identity and never issue a QR. */
+  allowPairing?: boolean;
   authStore?: EngineAuthStore;
   profileId: string;
   sessionDir?: string;

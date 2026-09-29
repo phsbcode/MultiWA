@@ -29,8 +29,12 @@ Shared libraries, domain logic, database layer, WhatsApp engine adapters, SDKs, 
 - Engines may expose a read-only trusted provider-identity resolver; Baileys resolves persisted LID identities through its encrypted session mapping store before emitting incoming messages, bounds inbound participant fallback to the current group metadata, normalizes device-scoped phone JIDs, and sends every newly recovered mapping through the persistence callback. Never treat the LID digits themselves as a phone number.
 - Modern Baileys `secretEncryptedMessage` edits use a bounded, memory-only raw-message cache for decryption. Never persist encrypted edit envelopes as customer messages or expose their key material.
 - Baileys uses profile-scoped durable auth supplied through `EngineConfig.authStore`. Legacy credential files are read-only migration inputs; database failure stops the connection rather than silently creating new credentials. Deletions remain tombstoned so old files cannot resurrect keys.
+- `allowPairing=false` requires a retained MD `creds.me` identity and required key material before constructing a socket. rc14 selects login by `creds.me`, not `creds.registered`; valid QR-linked auth with `registered=false` remains recoverable. Automatic recovery must not call `initAuthCreds`, import a missing legacy identity, write fresh auth, cache/emit QR material, or reset credentials. Unexpected QR stops the attempt.
 - Use the pinned Baileys package's default protocol version, `markOnlineOnConnect=false`, and no full-history opt-in. Group metadata lookups are bounded, coalesced and invalidated on membership/group changes. QR material is delivered to the authorized UI, never rendered in server logs.
 - Baileys logged-out/401 disconnects must be normalized as session invalidation so stale credentials are cleared and a fresh pairing QR can be generated; they must not enter the temporary transport auto-retry loop.
+- Investigation mode preserves credential evidence for operator review instead of clearing it on logged-out rejection. Connection diagnostics allow only numeric status/provider codes, known node/conflict tags, and known timelock enforcement enums. Auth diagnostics include only the read/write operation and allowlisted storage failure code; never serialize raw errors, nodes, credential documents, or message content into these diagnostic entries.
+- Baileys transport diagnostics emit one `whatsapp_transport_close` schema-versioned summary per observed socket generation and an observer-ready marker. Keep at most 12 lifecycle events, numeric monotonic order/timing, allowlisted error codes/syscalls, and actual RFC close code/frame flags. Unknown close reasons retain only byte length and a SHA-256 hash of at most 4096 bytes with the hashed length. No payloads or arbitrary error/reason strings are retained.
+- Observe underlying socket error/end/close before `ws` consumes errors. Local teardown intent must precede transport termination; subsequent cleanup must not become the initiating intent. Remove owned listeners on close, replacement, or a 35-second terminal-observation deadline. Report missing/private-field observations as unavailable; WebSocket activity is not proof of Baileys keepalive success. Do not enable verbose protocol logging.
 - SDKs must track the API spec in `docs/07-api-specification.md`
 - All packages use TypeScript strict mode and are built with `tsc`
 
@@ -46,6 +50,7 @@ Shared libraries, domain logic, database layer, WhatsApp engine adapters, SDKs, 
 - `turbo lint --filter=@multiwa/core` (and similar per package)
 - `turbo test --filter=@multiwa/core`
 - `pnpm --filter @multiwa/engines test` for engine normalization utilities
+- Transport diagnostic tests cover the installed `ws` library on isolated loopback plus synthetic TLS errors, teardown ordering, reason sanitization, duplicate closes, bounded retention, and listener cleanup. Verify observer-ready/archive delivery after deployment without deliberately closing a live profile; any synthetic archive probe must be explicitly labelled.
 - `turbo typecheck`
 - Prisma: `pnpm --filter @multiwa/database db:validate`
 

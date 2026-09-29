@@ -6,8 +6,11 @@ import makeWASocket, {
   makeCacheableSignalKeyStore,
   downloadMediaMessage,
   proto,
+  ReachoutTimelockEnforcementType,
 } from '@whiskeysockets/baileys';
 import { createBaileysAuthState } from './baileys-auth-store';
+import { diagnosticAuthStore, disconnectDiagnostic } from './baileys-diagnostics';
+import { observeBaileysTransport, TransportObserver, TeardownIntent } from './baileys-transport-diagnostics';
 import type { GroupMetadata } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import type {
@@ -41,6 +44,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
   private groupMetadataRequests = new Map<string, Promise<GroupMetadata>>();
 
   private socket: ReturnType<typeof makeWASocket> | null = null;
+  private transportObserver: TransportObserver | null = null;
   private config: EngineConfig | null = null;
   private status: EngineStatus = {
     isConnected: false,
@@ -220,7 +224,14 @@ export class BaileysAdapter implements IWhatsAppEngine {
 
     // Load auth state
     if (!config.authStore) throw new Error('A durable Baileys auth store is required');
-    this.authState = await createBaileysAuthState(config.authStore, sessionDir);
+    this.authState = await createBaileysAuthState(diagnosticAuthStore(config.authStore,
+      event => {
+        console.log(JSON.stringify({ ...event, profileId: config.profileId }));
+        if (config.investigationMode && this.socket && !this.isDestroying) {
+          void this.destroy('auth_storage_failure').then(() => config.onDisconnected?.('Auth Storage Unavailable'))
+            .catch(() => console.log(JSON.stringify({ event: 'investigation_stop_failed', profileId: config.profileId })));
+        }
+      }), sessionDir, { requireRetainedIdentity: config.allowPairing === false });
   }
 
   async connect(): Promise<void> {
@@ -228,6 +239,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
       throw new Error('Not initialized. Call initialize() first.');
     }
 
+    this.transportObserver?.dispose();
     this.socket = makeWASocket({
       markOnlineOnConnect: false,
       syncFullHistory: false,
@@ -246,17 +258,38 @@ export class BaileysAdapter implements IWhatsAppEngine {
       )?.message,
     });
 
+    this.transportObserver = observeBaileysTransport(this.socket.ws,
+      event => console.log(JSON.stringify({ ...event, profileId: this.config?.profileId })));
     this.setupEventHandlers();
   }
 
   private setupEventHandlers(): void {
     if (!this.socket) return;
+    const transportObserver = this.transportObserver;
 
     // Connection update
     this.socket.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
+      if (update.reachoutTimeLock) {
+        const restriction = update.reachoutTimeLock;
+        console.log(JSON.stringify({ event: 'whatsapp_reachout_timelock', profileId: this.config?.profileId,
+          active: restriction.isActive === true,
+          enforcementType: Object.values(ReachoutTimelockEnforcementType).includes(restriction.enforcementType) ?
+            restriction.enforcementType : null }));
+        if (restriction.isActive && this.config?.investigationMode) {
+          await this.destroy('reachout_timelock');
+          this.config?.onDisconnected?.('Reachout Timelock');
+          return;
+        }
+      }
+
       if (qr) {
+        if (this.config?.allowPairing === false) {
+          await this.destroy();
+          this.config?.onDisconnected?.('Pairing Required');
+          return;
+        }
         console.log(`[Baileys] QR Code received for profile ${this.config?.profileId}`);
         this.currentQR = qr;
         this.qrCallbacks.forEach((cb) => cb(qr));
@@ -264,7 +297,10 @@ export class BaileysAdapter implements IWhatsAppEngine {
       }
 
       if (connection === 'close') {
+        transportObserver?.providerClosed();
         if (!shouldHandleBaileysDisconnect(this.isDestroying)) return;
+        console.log(JSON.stringify({ event: 'whatsapp_connection_close', profileId: this.config?.profileId,
+          ...disconnectDiagnostic(lastDisconnect?.error) }));
         const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
         const isLoggedOut = statusCode === DisconnectReason.loggedOut;
         const disconnectReason = normalizeBaileysDisconnectReason(
@@ -301,7 +337,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
     // Credentials update
     this.socket.ev.on('creds.update', () => {
       this.authState.saveCreds().catch(async () => {
-        await this.destroy();
+        await this.destroy('auth_storage_failure');
         this.config?.onDisconnected?.('Auth Storage Unavailable');
       });
     });
@@ -494,6 +530,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
   }
 
   async disconnect(): Promise<void> {
+    this.transportObserver?.localTeardown('manual_logout');
     this.isDestroying = true;
     if (this.socket) {
       await this.socket.logout();
@@ -501,7 +538,8 @@ export class BaileysAdapter implements IWhatsAppEngine {
     }
   }
 
-  async destroy(): Promise<void> {
+  async destroy(intent: TeardownIntent = 'adapter_destroy'): Promise<void> {
+    this.transportObserver?.localTeardown(intent);
     this.isDestroying = true;
     this.groupMetadataCache.clear();
     this.groupMetadataRequests.clear();

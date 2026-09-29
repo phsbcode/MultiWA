@@ -152,7 +152,7 @@ export class ProfilesService {
   async connect(id: string, organizationId: string) {
     const profile = await this.findOne(id, organizationId);
 
-    if (profile.status === 'connected') {
+    if (profile.status === 'connected' && this.engineManager.getEngineStatus(id).isConnected) {
       return { status: 'already_connected', phone: profile.phoneNumber };
     }
 
@@ -177,16 +177,20 @@ export class ProfilesService {
 
   async getStatus(id: string, organizationId: string) {
     const profile = await this.findOne(id, organizationId);
+    const recovery = await this.engineManager.getTransportRecovery(id);
     const engineStatus = this.engineManager.getEngineStatus(id);
+    const status = recovery ? (engineStatus.isConnected && ['stabilizing', 'connected'].includes(recovery.phase)
+      ? 'connected' : ['connecting', 'retry_wait'].includes(recovery.phase) ? 'connecting' : 'disconnected') : profile.status;
     
     return {
       id: profile.id,
       name: profile.displayName,
-      status: profile.status,
+      status,
       phone: profile.phoneNumber,
-      lastConnectedAt: profile.lastConnectedAt,
+      lastConnectedAt: recovery?.markers.lastConnectedAt || profile.lastConnectedAt,
       engineConnected: engineStatus.isConnected,
-      connectionAlert: profile.status === 'disconnected' ? readConnectionAlert(profile.settings) : null,
+      connectionAlert: recovery ? recovery.alert : profile.status === 'disconnected' ? readConnectionAlert(profile.settings) : null,
+      transportRecovery: recovery?.markers || null,
       engine: resolveProfileEngineType(profile.settings),
       dntOperationsAccess: profile.dntOperationsAccess,
     };

@@ -3,10 +3,10 @@
 //
 // This service manages WhatsApp engine instances and wires them to EventsGateway
 
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationShutdown, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { EventsGateway } from '../events/events.gateway';
 import { prisma } from '@multiwa/database';
-import { EngineFactory } from '@multiwa/engines';
+import { EngineFactory, hasRetainedBaileysIdentity } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig } from '@multiwa/engines';
 import * as path from 'path';
 import * as QRCode from 'qrcode';
@@ -21,8 +21,11 @@ import {
 } from './message-type-filter';
 import { resolveSenderIdentity } from './sender-identity';
 import { resolveProfileEngineType } from './profile-engine';
-import { connectionAlertCode, recordConnectionAlert } from './connection-alert';
+import { connectionAlertCode, recordConnectionAlert, ConnectionAlertCode } from './connection-alert';
 import { applyMessageAck } from '../messages/ack-status';
+import { boundedRecoveryProfileIds, requiresManualReconnect, usesBoundedRecovery } from './reconnect-policy';
+import { FileRecoveryJournal, RecoveryPause } from './transport-recovery-journal';
+import { RecoveryAttempt, TransportRecovery } from './transport-recovery';
 
 
 interface EngineInstance {
@@ -38,10 +41,13 @@ function jsonObject(value: unknown): Record<string, any> {
 }
 
 @Injectable()
-export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
+export class EngineManagerService implements OnModuleDestroy, OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(EngineManagerService.name);
-  private connectionCycles = new Map<string, { generation: number; retries: number; paused: boolean }>();
+  private connectionCycles = new Map<string, { generation: number; retries: number; paused: boolean;
+    qrIssued?: boolean; pairingRestartUsed?: boolean; pairingRestartPending?: boolean }>();
   private engines = new Map<string, EngineInstance>();
+  private recoveryControllers = new Map<string, TransportRecovery>();
+  private shuttingDown = false;
   private processingInboundMessageKeys = new Set<string>();
 
   constructor(
@@ -53,6 +59,65 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     private readonly fastBotsService: FastBotsService,
   ) {
     this.logger.log('EngineManagerService initialized');
+  }
+
+  private recoveryAlert(reason: RecoveryPause | null): ConnectionAlertCode | null {
+    if (!reason) return null;
+    const known = ['MANUAL_PAUSE', 'RETRIES_EXHAUSTED', 'FORBIDDEN', 'LOGGED_OUT',
+      'CONNECTION_REPLACED', 'BAD_SESSION', 'AUTH_STORAGE_UNAVAILABLE',
+      'MULTIDEVICE_MISMATCH', 'REACHOUT_TIMELOCK', 'FREQUENT_DISCONNECTS'];
+    return known.includes(reason) ? reason as ConnectionAlertCode : 'RECOVERY_BLOCKED';
+  }
+
+  private recoveryFor(profileId: string): TransportRecovery {
+    let recovery = this.recoveryControllers.get(profileId);
+    if (recovery) return recovery;
+    recovery = new TransportRecovery(new FileRecoveryJournal(
+      process.env.SESSIONS_DIR || './sessions', profileId), {
+      hasRetainedIdentity: async () => {
+        const profile = await prisma.profile.findUnique({ where: { id: profileId },
+          select: { sessionData: true, settings: true } });
+        if (!profile || resolveProfileEngineType(profile.settings) !== 'baileys') return false;
+        return hasRetainedBaileysIdentity(profile.sessionData);
+      },
+      connect: async attempt => { await this.connectProfile(profileId, undefined, attempt); },
+      stop: async () => {
+        const cycle = this.connectionCycles.get(profileId);
+        if (cycle) cycle.paused = true;
+        const instance = this.engines.get(profileId);
+        this.engines.delete(profileId);
+        try { await instance?.engine.destroy?.(); }
+        finally { this.eventsGateway.emitConnectionStatus(profileId, 'disconnected'); }
+      },
+      disconnected: async reason => {
+        this.logger.log(JSON.stringify({ event: 'transport_recovery_state', profileId, pauseReason: reason }));
+        await recordConnectionAlert(profileId, this.recoveryAlert(reason));
+        await prisma.profile.update({ where: { id: profileId }, data: { status: reason ? 'disconnected' : 'connecting' } });
+        this.eventsGateway.emitConnectionStatus(profileId, reason ? 'disconnected' : 'connecting');
+        if (reason === 'RETRIES_EXHAUSTED' || reason === 'FREQUENT_DISCONNECTS') {
+          await this.notifyOrgUsers(profileId, NotificationType.DISCONNECTION,
+            'WhatsApp automatic recovery paused',
+            reason === 'RETRIES_EXHAUSTED' ? 'Three transport recovery attempts were exhausted. Operator review is required.'
+              : 'Four transport disconnects occurred within one hour. Operator review is required.',
+            { profileId, reason }).catch(() => this.logger.warn('Recovery notification unavailable'));
+        }
+      },
+      isReady: () => this.engines.get(profileId)?.engine.isReady() === true,
+    });
+    this.recoveryControllers.set(profileId, recovery);
+    return recovery;
+  }
+
+  async getTransportRecovery(profileId: string) {
+    if (!usesBoundedRecovery(profileId)) return null;
+    const recovery = this.recoveryFor(profileId);
+    const markers = await recovery.publicStatus();
+    const policy = await recovery.policyStatus();
+    return { markers, phase: policy.phase,
+      alert: policy.phase === 'paused' && policy.lastDisconnectedAt ? {
+        code: this.recoveryAlert(policy.pauseReason), occurredAt: policy.lastDisconnectedAt,
+        active: policy.pauseReason !== 'MANUAL_PAUSE',
+      } : null };
   }
 
   /**
@@ -88,10 +153,18 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       // Step 2: Reconnect only profiles that were connected before this API
       // process started. A session directory can remain after an intentional
       // disconnect and must not override the operator's selected state.
-      await this.autoReconnectProfiles(staleProfiles.map(profile => profile.id));
+      await this.autoReconnectProfiles(staleProfiles.map(profile => profile.id)
+        .filter(id => !requiresManualReconnect(id) && !usesBoundedRecovery(id)));
+      for (const profileId of boundedRecoveryProfileIds()) {
+        try { await this.recoveryFor(profileId).startup(); }
+        catch { await this.recoveryFor(profileId).storageStop(); }
+      }
       
     } catch (error) {
       this.logger.error('Error in onModuleInit:', error);
+      for (const profileId of boundedRecoveryProfileIds()) {
+        await this.recoveryFor(profileId).storageStop();
+      }
     }
   }
 
@@ -232,6 +305,11 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   }
 
   async onModuleDestroy() {
+    this.shuttingDown = true;
+    for (const recovery of this.recoveryControllers.values()) {
+      try { await recovery.shutdown(); }
+      catch { this.logger.warn('Recovery shutdown checkpoint unavailable; restart remains blocked'); }
+    }
     // Cleanup all engines on shutdown
     for (const [profileId, instance] of this.engines) {
       try {
@@ -244,6 +322,13 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     this.engines.clear();
   }
 
+  async onApplicationShutdown() {
+    for (const recovery of this.recoveryControllers.values()) {
+      try { await recovery.completeShutdown(); }
+      catch { this.logger.warn('Final recovery checkpoint unavailable'); }
+    }
+  }
+
   getCachedQrCode(profileId: string): string | undefined {
     return this.eventsGateway.getCachedQr(profileId);
   }
@@ -251,15 +336,37 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   /**
    * Initialize and connect a WhatsApp engine for a profile
    */
-  async connectProfile(profileId: string, retryGeneration?: number): Promise<{ status: string; message: string }> {
+  async connectProfile(profileId: string, retryGeneration?: number,
+    managedAttempt?: RecoveryAttempt): Promise<{ status: string; message: string }> {
+    if (this.shuttingDown) return { status: 'disconnected', message: 'API is shutting down' };
+    const recovery = usesBoundedRecovery(profileId) ? this.recoveryFor(profileId) : null;
+    if (recovery && !managedAttempt) {
+      if (retryGeneration !== undefined) return { status: 'disconnected', message: 'Use durable recovery scheduler' };
+      try {
+        const saved = await prisma.profile.findUnique({ where: { id: profileId }, select: { sessionData: true } });
+        // Only an explicit connect after intentionally absent auth may initiate pairing.
+        // Existing retained credentials never fall back to a QR, even on operator resume.
+        await recovery.explicitConnect(Boolean(saved && !saved.sessionData));
+      }
+      catch { await recovery.storageStop(); throw new Error('Recovery storage unavailable'); }
+      const policy = await recovery.policyStatus();
+      return { status: policy.phase === 'paused' ? 'disconnected' : 'connecting',
+        message: policy.phase === 'paused' ? 'Connection stopped for operator review' : 'Connection initiated' };
+    }
+    if (recovery && !recovery.isCurrent(managedAttempt!.token)) {
+      return { status: 'disconnected', message: 'Recovery attempt cancelled' };
+    }
+    let cycle = this.connectionCycles.get(profileId);
+    if (retryGeneration !== undefined && requiresManualReconnect(profileId) && !cycle?.pairingRestartPending) {
+      return { status: 'disconnected', message: 'Automatic reconnect disabled for investigation' };
+    }
     this.logger.log(`Connecting profile: ${profileId}`);
 
-    let cycle = this.connectionCycles.get(profileId);
     if (retryGeneration !== undefined) {
       if (!cycle || cycle.paused || cycle.generation !== retryGeneration) {
         return { status: 'disconnected', message: 'Connection attempt cancelled' };
       }
-      cycle = { ...cycle };
+      cycle = { ...cycle, pairingRestartPending: false };
       this.connectionCycles.set(profileId, cycle);
     } else {
       const active = this.engines.get(profileId);
@@ -270,7 +377,8 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     }
     let disconnectHandled = false;
     const generation = cycle.generation;
-    const current = () => this.connectionCycles.get(profileId) === cycle && !cycle.paused;
+    const current = () => this.connectionCycles.get(profileId) === cycle && !cycle.paused &&
+      (!recovery || recovery.isCurrent(managedAttempt!.token));
 
     // Check if already connected
     const existing = this.engines.get(profileId);
@@ -316,6 +424,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     const sessionDir = path.join(sessionsBase, profileId);
 
     const engineType = resolveProfileEngineType(profile.settings);
+    if (recovery && engineType !== 'baileys') {
+      await recovery.pause('BAD_SESSION');
+      return { status: 'disconnected', message: 'Bounded recovery requires the Baileys engine' };
+    }
 
     // Chromium locks apply only to whatsapp-web.js. Baileys stores its
     // multi-file credentials directly in the profile session directory.
@@ -325,6 +437,8 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     
     const engineConfig: EngineConfig = {
       profileId,
+      investigationMode: requiresManualReconnect(profileId) || Boolean(recovery),
+      allowPairing: managedAttempt?.allowPairing,
       sessionDir,
       authStore: engineType === 'baileys' ? {
         read: async () => (await prisma.profile.findUnique({ where: { id: profileId }, select: { sessionData: true } }))?.sessionData || null,
@@ -334,6 +448,11 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       } : undefined,
       onQR: async (qr: string) => {
         if (!current()) return;
+        if (recovery) {
+          try { if (!await recovery.qr(managedAttempt!)) return; }
+          catch { await recovery.storageStop(); return; }
+        }
+        cycle.qrIssued = true;
         this.logger.log(`QR code received for profile ${profileId}`);
         
         try {
@@ -355,8 +474,21 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       },
       onReady: async (phone: string, pushName: string) => {
         if (!current()) return;
-        cycle.retries = 0;
-        try { await recordConnectionAlert(profileId, null); } catch { this.logger.warn('Connection alert storage unavailable'); }
+        cycle.qrIssued = false;
+        if (recovery) {
+          try {
+            const accepted = await recovery.ready(managedAttempt!.token, async at => {
+              await recordConnectionAlert(profileId, null);
+              await prisma.profile.update({ where: { id: profileId }, data: {
+                status: 'connected', phoneNumber: phone, lastConnectedAt: new Date(at),
+              } });
+            });
+            if (!accepted || !current()) return;
+          } catch { await recovery.storageStop(); return; }
+        } else {
+          cycle.retries = 0;
+          try { await recordConnectionAlert(profileId, null); } catch { this.logger.warn('Connection alert storage unavailable'); }
+        }
         this.logger.log(`Profile ${profileId} connected: ${phone} (${pushName})`);
         
         // Update engine instance status
@@ -366,7 +498,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         }
 
         // Update database
-        await prisma.profile.update({
+        if (!recovery) await prisma.profile.update({
           where: { id: profileId },
           data: {
             status: 'connected',
@@ -389,6 +521,11 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         if (!current() || disconnectHandled) return;
         disconnectHandled = true;
         this.logger.log(`Profile ${profileId} disconnected: ${reason}`);
+        if (recovery) {
+          try { await recovery.disconnected(managedAttempt!.token, reason); }
+          catch { await recovery.storageStop(); }
+          return;
+        }
         
         // Update engine instance status
         const instance = this.engines.get(profileId);
@@ -397,21 +534,47 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         }
 
         const terminal = /Forbidden|Connection Replaced|Multidevice Mismatch|Bad Session|Auth Storage Unavailable|Session Expired|Session expired|Logged Out|loggedOut/i.test(reason);
-        if (terminal || cycle.retries >= 3) {
-          cycle.paused = true;
-          try { await recordConnectionAlert(profileId, connectionAlertCode(reason, cycle.retries >= 3)); } catch { this.logger.warn('Connection alert storage unavailable'); }
-          await prisma.profile.update({ where: { id: profileId }, data: { status: 'disconnected' } });
+        if (requiresManualReconnect(profileId) && reason === 'Restart Required' &&
+            cycle.qrIssued && !cycle.pairingRestartUsed) {
+          cycle.pairingRestartUsed = true;
+          cycle.pairingRestartPending = true;
+          cycle.qrIssued = false;
+          this.logger.log(JSON.stringify({ event: 'investigation_pairing_restart', profileId, limit: 1 }));
           await instance?.engine.destroy?.();
           this.engines.delete(profileId);
+          if (!current()) return;
+          await this.connectProfile(profileId, generation);
+          return;
+        }
+        if (terminal || cycle.retries >= 3 || requiresManualReconnect(profileId)) {
+          if (requiresManualReconnect(profileId)) {
+            this.logger.warn(JSON.stringify({ event: 'investigation_connection_stopped', profileId,
+              automaticReconnect: false, retries: cycle.retries }));
+          }
+          cycle.paused = true;
+          // Stop the provider before persisting status: the database may be the
+          // reason for this disconnect. A failed write must not retain a socket.
+          try {
+            await instance?.engine.destroy?.();
+          } catch {
+            this.logger.warn('Terminal engine cleanup failed');
+          } finally {
+            if (this.engines.get(profileId) === instance) this.engines.delete(profileId);
+            this.eventsGateway.emitConnectionStatus(profileId, 'disconnected');
+          }
+          try { await recordConnectionAlert(profileId, connectionAlertCode(reason, cycle.retries >= 3)); } catch { this.logger.warn('Connection alert storage unavailable'); }
+          try {
+            await prisma.profile.update({ where: { id: profileId }, data: { status: 'disconnected' } });
+          } catch {
+            this.logger.warn('Disconnected status storage unavailable');
+          }
           // Preserve credentials on restrictions and transport failures. A logged-out
           // session must be explicitly paired again; do not repeatedly reconnect it.
-          if (/Logged Out|loggedOut/.test(reason)) {
+          if (/Logged Out|loggedOut/.test(reason) && !requiresManualReconnect(profileId)) {
             const fs = await import('fs/promises');
             await fs.rm(sessionDir, { recursive: true, force: true });
             await prisma.profile.update({ where: { id: profileId }, data: { sessionData: null } });
           }
-          await prisma.profile.update({ where: { id: profileId }, data: { status: 'disconnected' } });
-          this.eventsGateway.emitConnectionStatus(profileId, 'disconnected');
           return;
         }
 
@@ -1069,6 +1232,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         () => this.logger.log(`Engine connect completed for ${profileId}`),
         async (error) => {
           if (!current()) return;
+          if (recovery) {
+            await recovery.pause('UNKNOWN_FAILURE').catch(() => recovery.storageStop());
+            return;
+          }
           this.logger.error(`Engine connect failed for ${profileId}:`, error);
 
           try {
@@ -1107,6 +1274,12 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
 
       return { status: 'connecting', message: 'Scan QR code to connect' };
     } catch (error: any) {
+      if (recovery) {
+        const reason = /Retained credentials required|authentication|auth state/i.test(String(error?.message || ''))
+          ? 'BAD_SESSION' : 'AUTH_STORAGE_UNAVAILABLE';
+        await recovery.pause(reason).catch(() => recovery.storageStop());
+        return { status: 'disconnected', message: 'Connection stopped for operator review' };
+      }
       this.logger.error(`Failed to initialize engine for ${profileId}:`, error);
       
       await prisma.profile.update({
@@ -1123,6 +1296,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
    */
   async disconnectProfile(profileId: string): Promise<{ status: string }> {
     this.logger.log(`Disconnecting profile: ${profileId}`);
+    if (usesBoundedRecovery(profileId)) {
+      await this.recoveryFor(profileId).pause('MANUAL_PAUSE');
+      return { status: 'disconnected' };
+    }
     const cycle = this.connectionCycles.get(profileId);
     if (cycle) cycle.paused = true;
     this.connectionCycles.set(profileId, { generation: (cycle?.generation || 0) + 1, retries: 0, paused: true });

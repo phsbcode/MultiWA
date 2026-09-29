@@ -10,6 +10,7 @@ Containerization configuration: Dockerfiles, Docker Compose files, Caddy reverse
 - `Dockerfile.api` — API server container image
 - `Dockerfile.worker` — Worker container image
 - `Dockerfile.api-runtime-update` — a dependency-preserving update from an explicitly pinned existing API image, copying only prebuilt API/engine output from a minimal temporary context. Use only when dependencies/schema are unchanged; start Node directly without schema push. Retain the old container and image for rollback.
+- Runtime updates must preserve the active container's environment, named mounts, loopback port binding, logging, and container-level healthcheck. Verify changed compiled files against the candidate and use isolated authorization tests plus bounded live GET probes for filter changes; an image tag alone does not establish source parity.
 - `entrypoint-api.sh` — API container entrypoint
 - `Caddyfile` — Caddy reverse proxy config
 - `nginx/` — Nginx configs (main conf + example + landing page)

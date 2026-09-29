@@ -78,9 +78,10 @@ Default section order:
 
 When the user requests a durable behavior change, record it here or in the relevant child AGENTS.md
 
-- After Docker build, rebuild, or image-testing work, remove unused build cache and disposable intermediate images. Preserve containers, volumes, active images, and explicitly retained rollback images; then verify container health and disk usage and report the recovered space.
+- After Docker build, rebuild, or image-testing work, remove unused build cache and disposable intermediate images. Preserve every running or stopped container, including test containers, except explicitly authorized older MultiWA rollback containers under the retention policy below. Preserve volumes, active images, and retained rollback images; then verify container health and disk usage and report the recovered space.
 
 - MultiWA API rollback retention is one previous deployment. After verifying the active service and its immediate predecessor, remove older rollback containers and images that are not required by other containers. Preserve named volumes and unrelated stopped test containers/databases.
+- MultiWA maintenance is owned in this repository; Payment Review application work stays in `/home/hermes/dnt-payments-monitor`. Report completed delegated MultiWA work directly to its verified Herdr agent at `w9:p2` with `herdr agent prompt`, without `--wait` or requesting an acknowledgement. Include findings, changes, validation, deployment status, blockers, and required actions.
 
 ## Global Workflow Rules
 
@@ -108,7 +109,7 @@ When the user requests a durable behavior change, record it here or in the relev
 | `packages/AGENTS.md` | Shared packages: core, database, engines, SDKs, integrations |
 | `docs/AGENTS.md` | Project documentation (markdown docs) |
 | `docs-site/AGENTS.md` | Docusaurus documentation site |
-| `scripts/AGENTS.md` | Utility scripts and tooling |
+| `scripts/AGENTS.md` | Utility scripts, tooling, bounded log archiving, and scoped transport observation/continuation |
 | `docker/AGENTS.md` | Dockerfiles, Compose files, and container configuration |
 | `.github/AGENTS.md` | GitHub CI/CD workflows and issue/PR templates |
 | `code-review/AGENTS.md` | Code review records |

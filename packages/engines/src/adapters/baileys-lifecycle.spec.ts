@@ -20,6 +20,9 @@ describe('Baileys lifecycle', () => {
   it('preserves a temporary provider reason when the session is not logged out', () => {
     expect(normalizeBaileysDisconnectReason(false, 'Connection Failure')).toBe('Connection Failure');
   });
+  it('distinguishes the required post-pairing restart from connection failure', () => {
+    expect(normalizeBaileysDisconnectReason(false, 'Stream Errored', 515)).toBe('Restart Required');
+  });
 });
 
 it('retains explicit forbidden and replaced-session reasons despite generic provider messages', () => {

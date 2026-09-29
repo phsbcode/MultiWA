@@ -10,7 +10,8 @@ export function normalizeBaileysDisconnectReason(
   if (isLoggedOut) return 'Logged Out';
   const terminal: Record<number, string> = {
     403: 'Forbidden', 440: 'Connection Replaced',
-    411: 'Multidevice Mismatch', 500: 'Bad Session',
+    411: 'Multidevice Mismatch', 500: 'Bad Session', 515: 'Restart Required',
+    408: 'Timed Out', 428: 'Connection Closed',
   };
   if (statusCode && terminal[statusCode]) return terminal[statusCode];
   return providerMessage || 'Connection closed';

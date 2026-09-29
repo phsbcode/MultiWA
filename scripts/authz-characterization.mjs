@@ -170,6 +170,42 @@ async function waitForTerminalMockAcknowledgements(messageIds) {
   throw new Error('Synthetic provider acknowledgements did not reach terminal status.');
 }
 
+async function verifyProfileConversationFilters({ credential, profileId, otherProfileId,
+  conversationId, emptyConversationId, sameOrganizationConversationId,
+  foreignConversationId, organizationIds }) {
+  for (const since of [undefined, '2026-09-07T01:01:30Z']) {
+    for (const [label, selectedConversation] of [
+      ['owned', conversationId], ['empty', emptyConversationId],
+      ['other profile in same organization', sameOrganizationConversationId],
+      ['foreign organization', foreignConversationId], ['missing', crypto.randomUUID()],
+    ]) {
+      const query = new URLSearchParams({ conversationId: selectedConversation,
+        includeMedia: 'false', limit: '5' });
+      if (since) query.set('since', since);
+      const result = await requestWithoutBusinessWrites({ method: 'GET',
+        route: `/api/v1/messages/profile/${profileId}?${query}`, credential,
+        expectedStatus: 200, label: `Profile conversation filter: ${label}`, organizationIds });
+      const expected = await prisma.message.findMany({ where: {
+        profileId, conversationId: selectedConversation,
+        ...(since ? { timestamp: { gte: new Date(since) } } : {}),
+      }, orderBy: { timestamp: 'desc' }, take: 5, select: { id: true } });
+      assert.deepEqual(result.value.map(item => item.id), expected.map(item => item.id));
+      if (label === 'owned') assert.ok(result.value.length > 0);
+      else assert.deepEqual(result.value, []);
+      assert.ok(result.value.every(item => item.profileId === profileId &&
+        item.conversationId === selectedConversation && !item.content?.url));
+    }
+    const query = new URLSearchParams({ conversationId, includeMedia: 'false', limit: '5' });
+    if (since) query.set('since', since);
+    await requestWithoutBusinessWrites({ method: 'GET',
+      route: `/api/v1/messages/profile/${otherProfileId}?${query}`, credential,
+      expectedStatus: 404, label: 'Foreign profile is denied before conversation filtering', organizationIds });
+    await requestWithoutBusinessWrites({ method: 'GET',
+      route: `/api/v1/messages/profile/${profileId}?${query}`, credential: null,
+      expectedStatus: 401, label: 'Conversation filter requires authentication', organizationIds });
+  }
+}
+
 function routeWithForgedSelectors(path, profileId, organizationId) {
   const separator = path.includes('?') ? '&' : '?';
   return `${path}${separator}profileId=${encodeURIComponent(profileId)}` +
@@ -563,6 +599,14 @@ try {
   const readKey = await apiKey(jwtA, 'synthetic-read', ['messages:read']);
   const emptyKey = await apiKey(jwtA, 'synthetic-empty', []);
   const wildcardKey = await apiKey(jwtA, 'synthetic-wildcard', ['*']);
+  for (const credential of [jwtA, readKey]) {
+    await verifyProfileConversationFilters({ credential, profileId: profileA1,
+      otherProfileId: profileB, conversationId: conversationA1.id,
+      emptyConversationId: conversationA1Older.id,
+      sameOrganizationConversationId: conversationA2.id, foreignConversationId: conversationB.id,
+      organizationIds: [jwtA.organizationId, jwtB.organizationId] });
+  }
+  report.protected.push('Profile conversation filters intersect the authorized profile for JWT and API keys, with and without since; missing, empty and other-profile conversations return no records and every read preserves business records.');
   for (const [name, key] of [['read', readKey], ['empty', emptyKey], ['wildcard', wildcardKey]]) {
     const response = await request('GET', '/api/v1/profiles', key);
     assert.equal(response.status, 200);

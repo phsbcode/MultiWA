@@ -3,8 +3,26 @@ import { join } from 'node:path';
 import { BufferJSON, initAuthCreds, proto, type AuthenticationState } from '@whiskeysockets/baileys';
 import type { EngineAuthStore } from '../types';
 
+function retainedIdentity(document: any): boolean {
+  const creds = document?.creds;
+  const pair = (value: any) => Buffer.isBuffer(value?.private) && value.private.length === 32 &&
+    Buffer.isBuffer(value?.public) && value.public.length === 32;
+  // rc14 chooses login versus registration by creds.me, not creds.registered.
+  return document?.format === 'baileys-auth-v1' && Boolean(document.keys) &&
+    typeof document.keys === 'object' && !Array.isArray(document.keys) &&
+    typeof creds?.me?.id === 'string' && /^\d+(?::\d+)?@(s\.whatsapp\.net|lid)$/.test(creds.me.id) &&
+    pair(creds.noiseKey) && pair(creds.signedIdentityKey) && pair(creds.signedPreKey?.keyPair) &&
+    Buffer.isBuffer(creds.signedPreKey?.signature) && creds.signedPreKey.signature.length === 64;
+}
+
+export function hasRetainedBaileysIdentity(serialized: string | null): boolean {
+  try { return retainedIdentity(JSON.parse(serialized || 'null', BufferJSON.reviver)); }
+  catch { return false; }
+}
+
 /** A profile-scoped durable store. Legacy session files are read, never rewritten. */
-export async function createBaileysAuthState(store: EngineAuthStore, legacyDirectory: string) {
+export async function createBaileysAuthState(store: EngineAuthStore, legacyDirectory: string,
+  options: { requireRetainedIdentity?: boolean } = {}) {
   const decode = (text: string) => JSON.parse(text, BufferJSON.reviver);
   const legacy = async (filename: string) => {
     try { return decode(await readFile(join(legacyDirectory, filename), 'utf8')); }
@@ -14,6 +32,9 @@ export async function createBaileysAuthState(store: EngineAuthStore, legacyDirec
   let document = serialized ? decode(serialized) : undefined;
   if (serialized && (!document || document.format !== 'baileys-auth-v1')) {
     throw new Error('Unrecognized persisted Baileys authentication format');
+  }
+  if (options.requireRetainedIdentity && !retainedIdentity(document)) {
+    throw new Error('Retained credentials required for automatic recovery');
   }
   if (!document) {
     document = { format: 'baileys-auth-v1', creds: await legacy('creds.json') || initAuthCreds(), keys: {} };

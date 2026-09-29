@@ -10,9 +10,11 @@ image_suffix=${image_id#sha256:}
 image_suffix=${image_suffix:0:12}
 api=multiwa-authz-api-${image_suffix}
 database_url=postgresql://multiwa_test:multiwa_test@${database}:5432/multiwa_test
+schema_directory=$(mktemp -d)
 
 stop_test_services() {
   docker stop "$api" "$redis" "$database" >/dev/null 2>&1 || true
+  rm -rf "$schema_directory"
 }
 trap stop_test_services EXIT
 
@@ -56,8 +58,15 @@ if [ "$(docker inspect --format '{{.State.Health.Status}}' "$database")" != heal
   exit 1
 fi
 
-docker run --rm --entrypoint sh --network "$network" -e DATABASE_URL="$database_url" \
-  -w /app/packages/database "$image" -lc 'pnpm exec prisma db push --skip-generate' >/dev/null
+# Runtime images need not ship Prisma's development CLI. Generate SQL from
+# the candidate's schema using the workspace CLI and apply only to the tmpfs DB.
+docker run --entrypoint cat "$image" /app/packages/database/prisma/schema.prisma \
+  > "$schema_directory/schema.prisma"
+pnpm --filter @multiwa/database exec prisma migrate diff --from-empty \
+  --to-schema-datamodel "$schema_directory/schema.prisma" --script \
+  --output "$schema_directory/schema.sql"
+docker exec -i "$database" psql -U multiwa_test -d multiwa_test -v ON_ERROR_STOP=1 \
+  < "$schema_directory/schema.sql" >/dev/null
 
 if ! docker container inspect "$api" >/dev/null 2>&1; then
   docker create --name "$api" --network "$network" \
@@ -101,7 +110,7 @@ docker exec "$api" node -e \
 
 echo "Candidate image verified: $image_id"
 
-docker run --rm --entrypoint node --network "$network" \
+docker run --entrypoint node --network "$network" \
   -e AUTHZ_CHARACTERIZATION=1 \
   -e AUTHZ_STATIC_FIXTURE=1 \
   -e AUTHZ_TEST_BASE_URL="http://${api}:3333" \

@@ -18,6 +18,7 @@ vi.mock('@multiwa/engines', () => ({
 
 vi.mock('@multiwa/database', () => ({
   prisma: {
+    $executeRaw: vi.fn().mockResolvedValue(1),
     profile: {
       findMany: vi.fn(),
       findUnique: vi.fn(),
@@ -278,10 +279,44 @@ describe('reconnect restrictions and operator pause', () => {
   }
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.$executeRaw).mockResolvedValue(1);
     vi.mocked(prisma.profile.findUnique).mockResolvedValue({ id: 'paused-profile', settings: { engine: 'baileys' }, sessionData: null } as any);
     vi.mocked(prisma.profile.update).mockResolvedValue({} as any);
     engine.initialize.mockResolvedValue(undefined);engine.connect.mockResolvedValue(undefined);engine.destroy.mockResolvedValue(undefined);
   });
+  it.each(['Forbidden', 'Auth Storage Unavailable', 'Reachout Timelock', 'Logged Out'])(
+    'stops an investigation connection despite failed database writes after %s', async reason => {
+      vi.useFakeTimers();
+      vi.stubEnv('MULTIWA_MANUAL_RECONNECT_PROFILE_IDS', 'paused-profile');
+      try {
+        const events = { emitConnectionStatus: vi.fn(), emitQrUpdate: vi.fn() };
+        const service = new EngineManagerService(events as any, {} as any, {} as any, {} as any, {} as any);
+        await service.connectProfile('paused-profile');
+        const config = engine.initialize.mock.calls.at(-1)![0];
+        const failure = Object.assign(new Error('synthetic disk full'), { code: '53100' });
+        vi.mocked(prisma.$executeRaw).mockRejectedValue(failure);
+        vi.mocked(prisma.profile.update).mockRejectedValue(failure);
+
+        await expect(config.onDisconnected(reason)).resolves.toBeUndefined();
+        expect(engine.destroy).toHaveBeenCalledOnce();
+        expect((service as any).engines.has('paused-profile')).toBe(false);
+        expect(events.emitConnectionStatus).toHaveBeenLastCalledWith('paused-profile', 'disconnected');
+        expect(engine.destroy.mock.invocationCallOrder[0]).toBeLessThan(
+          vi.mocked(prisma.$executeRaw).mock.invocationCallOrder[0]);
+        const writes = vi.mocked(prisma.profile.update).mock.calls.length;
+        await config.onReady('synthetic-phone', 'Synthetic');
+        await config.onDisconnected(reason);
+        await vi.advanceTimersByTimeAsync(120000);
+        expect(prisma.profile.update).toHaveBeenCalledTimes(writes);
+        expect(engine.destroy).toHaveBeenCalledOnce();
+        expect(createEngine).toHaveBeenCalledOnce();
+        expect(vi.mocked(prisma.profile.update).mock.calls.some(([arg]) => arg.data.sessionData === null)).toBe(false);
+      } finally {
+        vi.useRealTimers();
+        vi.unstubAllEnvs();
+      }
+    },
+  );
   it('does not reconnect after forbidden and retains credentials', async () => {
     const service = manager();await service.connectProfile('paused-profile');
     const config = engine.initialize.mock.calls.at(-1)![0];
@@ -290,6 +325,100 @@ describe('reconnect restrictions and operator pause', () => {
     expect(prisma.profile.update).toHaveBeenLastCalledWith({ where: { id: 'paused-profile' }, data: { status: 'disconnected' } });
     expect(vi.mocked(prisma.profile.update).mock.calls.some(([arg]) => arg.data.sessionData === null)).toBe(false);
   });
+  it('preserves credentials on storage failure and resumes only after explicit connect and ready', async () => {
+    vi.useFakeTimers();
+    try {
+      const saved = 'synthetic-durable-auth';
+      vi.mocked(prisma.profile.findUnique).mockResolvedValue({
+        id: 'paused-profile', settings: { engine: 'baileys' }, sessionData: saved,
+      } as any);
+      const service = manager();
+      vi.spyOn(service as any, 'notifyOrgUsers').mockResolvedValue(undefined);
+      await service.connectProfile('paused-profile');
+      const failed = engine.initialize.mock.calls.at(-1)![0];
+      await failed.onDisconnected('Auth Storage Unavailable');
+      await vi.advanceTimersByTimeAsync(120000);
+      expect(createEngine).toHaveBeenCalledTimes(1);
+      expect(prisma.$executeRaw).toHaveBeenLastCalledWith(
+        expect.anything(), expect.stringContaining('AUTH_STORAGE_UNAVAILABLE'), 'paused-profile',
+      );
+      const writes = vi.mocked(prisma.profile.update).mock.calls.length;
+      await failed.onReady('synthetic-phone', 'Synthetic');
+      expect(vi.mocked(prisma.profile.update).mock.calls.length).toBe(writes);
+
+      await service.connectProfile('paused-profile');
+      const recovered = engine.initialize.mock.calls.at(-1)![0];
+      expect(createEngine).toHaveBeenCalledTimes(2);
+      expect(await recovered.authStore.read()).toBe(saved);
+      expect(prisma.$executeRaw).toHaveBeenLastCalledWith(
+        expect.anything(), expect.stringContaining('AUTH_STORAGE_UNAVAILABLE'), 'paused-profile',
+      );
+      await recovered.onReady('synthetic-phone', 'Synthetic');
+      expect(prisma.$executeRaw).toHaveBeenLastCalledWith(expect.anything(), 'null', 'paused-profile');
+      expect(prisma.profile.update).toHaveBeenLastCalledWith({
+        where: { id: 'paused-profile' },
+        data: expect.objectContaining({ status: 'connected' }),
+      });
+      expect(vi.mocked(prisma.profile.update).mock.calls.some(([arg]) => arg.data.sessionData === null)).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+  it('investigation disables startup reconnect and transient retries but permits explicit connect', async () => {
+    const previous = process.env.MULTIWA_MANUAL_RECONNECT_PROFILE_IDS;
+    process.env.MULTIWA_MANUAL_RECONNECT_PROFILE_IDS = 'paused-profile';
+    vi.useFakeTimers();
+    try {
+      const service = manager();
+      vi.mocked(prisma.profile.findMany).mockResolvedValueOnce([{ id: 'paused-profile' }] as any);
+      await service.onModuleInit();
+      expect(createEngine).not.toHaveBeenCalled();
+      await service.connectProfile('paused-profile');
+      expect(engine.initialize.mock.calls.at(-1)![0].investigationMode).toBe(true);
+      await engine.initialize.mock.calls.at(-1)![0].onDisconnected('Connection Failure');
+      await vi.advanceTimersByTimeAsync(120000);
+      expect(createEngine).toHaveBeenCalledTimes(1);
+      await service.connectProfile('paused-profile', 1);
+      expect(createEngine).toHaveBeenCalledTimes(1);
+      await service.connectProfile('paused-profile');
+      expect(createEngine).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+      if (previous === undefined) delete process.env.MULTIWA_MANUAL_RECONNECT_PROFILE_IDS;
+      else process.env.MULTIWA_MANUAL_RECONNECT_PROFILE_IDS = previous;
+    }
+  });
+  it('allows exactly one post-QR 515 restart during investigation, then stops', async () => {
+    const previous = process.env.MULTIWA_MANUAL_RECONNECT_PROFILE_IDS;
+    process.env.MULTIWA_MANUAL_RECONNECT_PROFILE_IDS = 'paused-profile';
+    try {
+      const service = manager();
+      await service.connectProfile('paused-profile');
+      const config = engine.initialize.mock.calls.at(-1)![0];
+      await config.onQR('synthetic-pairing-value');
+      await config.onDisconnected('Restart Required');
+      expect(createEngine).toHaveBeenCalledTimes(2);
+      await engine.initialize.mock.calls.at(-1)![0].onDisconnected('Restart Required');
+      expect(createEngine).toHaveBeenCalledTimes(2);
+      expect(prisma.profile.update).toHaveBeenLastCalledWith({where:{id:'paused-profile'},data:{status:'disconnected'}});
+    } finally {
+      if(previous===undefined)delete process.env.MULTIWA_MANUAL_RECONNECT_PROFILE_IDS;
+      else process.env.MULTIWA_MANUAL_RECONNECT_PROFILE_IDS=previous;
+    }
+  });
+  it.each(['Forbidden','Logged Out','Auth Storage Unavailable','Connection Failure'])(
+    'QR issuance does not allow investigation retries after %s', async reason => {
+      const previous=process.env.MULTIWA_MANUAL_RECONNECT_PROFILE_IDS;
+      process.env.MULTIWA_MANUAL_RECONNECT_PROFILE_IDS='paused-profile';
+      try {
+        const service=manager();await service.connectProfile('paused-profile');
+        const config=engine.initialize.mock.calls.at(-1)![0];await config.onQR('synthetic-pairing-value');
+        await config.onDisconnected(reason);
+        expect(createEngine).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(prisma.profile.update).mock.calls.some(([arg])=>arg.data.sessionData===null)).toBe(false);
+      } finally {
+        if(previous===undefined)delete process.env.MULTIWA_MANUAL_RECONNECT_PROFILE_IDS;
+        else process.env.MULTIWA_MANUAL_RECONNECT_PROFILE_IDS=previous;
+      }
+    });
   it('manual disconnect cancels an already waiting retry and stale ready callback', async () => {
     vi.useFakeTimers();
     try {

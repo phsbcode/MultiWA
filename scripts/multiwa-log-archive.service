@@ -1,0 +1,21 @@
+[Unit]
+Description=Compressed archive of MultiWA API Docker logs
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Environment=ARCHIVE_CONTAINER=multiwa-api
+Environment=ARCHIVE_DIRECTORY=%h/.local/state/multiwa-log-archive
+ExecStart=/usr/bin/node %h/.local/libexec/archive-container-logs.mjs
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+MemoryMax=192M
+CPUQuota=20%
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

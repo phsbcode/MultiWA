@@ -137,6 +137,27 @@ The general QR endpoint lives under the account-scoped `/accounts/.../qr` route.
 
 For the same restricted integration, `GET /groups/dnt-operations/profile/:profileId` returns groups only after the profile access and organization checks pass.
 
+`GET /profiles/:id/status` includes additive `transportRecovery` metadata for profiles explicitly selected by `MULTIWA_TRANSPORT_RECOVERY_PROFILE_IDS`; it is `null` otherwise. Profile organization ownership is checked before reading these markers.
+
+```json
+{
+  "transportRecovery": {
+    "version": 1,
+    "firstGapAt": "2026-09-29T09:28:50.918Z",
+    "lastDisconnectedAt": "2026-09-29T09:28:50.918Z",
+    "lastConnectedAt": "2026-09-29T12:00:00.000Z",
+    "revision": 5,
+    "settledAt": "2026-09-29T12:00:30.000Z",
+    "gapAccuracy": "observed",
+    "persistence": "durable"
+  }
+}
+```
+
+Dates are nullable until observed. `revision` is a positive persisted lifecycle revision; GET does not change it. `firstGapAt` is the earliest retained coverage gap and never advances or clears on ready, polling or consumer recovery. `lastConnectedAt` advances on actual ready. `settledAt` clears on a new gap/attempt and is persisted after 30 continuous ready seconds on the same socket. `gapAccuracy` is `observed` or `conservative`; `persistence` is `durable` or `degraded`. Recovery journals preserve these markers independently of PostgreSQL. An unclean restart fails closed and may widen the gap conservatively when its exact start could not be persisted.
+
+Consumers must require `status=connected`, `engineConnected=true`, non-null `settledAt`, durable markers and a ready time at or after the latest disconnected marker. Each consumer owns its completed watermark and deduplication. There is no global recovery acknowledgement. During retry backoff, status remains `connecting`. The 30-second settling marker does not reset retry limits: the recovery budget requires ten continuous ready minutes; exhaustion and a separate four-disconnects-per-hour circuit require explicit operator resume and expose `RETRIES_EXHAUSTED` or `FREQUENT_DISCONNECTS`. Other fail-closed recovery conditions can expose `RECOVERY_BLOCKED`.
+
 ### Messages (`/messages`)
 
 | Method | Endpoint | Description |

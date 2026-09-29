@@ -17,6 +17,7 @@ async function bootstrap() {
       AppModule,
       new FastifyAdapter({ logger: true }),
     );
+    app.enableShutdownHooks();
     console.log('✅ [1/7] NestJS application created');
 
     // Register multipart for file uploads

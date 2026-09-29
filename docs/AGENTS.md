@@ -19,6 +19,7 @@ All `.md` files in `docs/` covering:
 
 - Docs use standard markdown
 - API spec in `07-api-specification.md` is the authoritative reference for SDKs and integrations
+- Profile status recovery markers in that spec are read-only, consumer-independent coverage evidence; never document ready or polling as a global catch-up acknowledgement.
 - Screenshots stored in `docs/screenshots/`
 - Doc content may be mirrored to `docs-site/` for the Docusaurus site
 
