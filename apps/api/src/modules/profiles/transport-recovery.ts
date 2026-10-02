@@ -23,6 +23,7 @@ export function classifyRecoveryFailure(reason: string): RecoveryPause | 'transp
   if (reason === 'Pairing Required') return 'PAIRING_REQUIRED';
   if (/Bad Session|Session Expired|invalid.*auth|credential/i.test(reason)) return 'BAD_SESSION';
   if (reason === 'Restart Required') return 'pairing_restart';
+  if (reason === 'Provider Service Unavailable (503)') return 'transport';
   return /^(Connection Terminated|Connection closed|Connection Closed|Connection was lost|Connection Lost|Timed Out|Connect Timeout|WebSocket Error \((ECONNRESET|ETIMEDOUT|EPIPE)\))$/.test(reason)
     ? 'transport' : 'UNKNOWN_FAILURE';
 }

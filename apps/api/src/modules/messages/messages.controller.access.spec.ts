@@ -36,6 +36,7 @@ describe('MessagesController routed local access authorization', () => {
   let app: NestFastifyApplication;
   const service = Object.fromEntries(routes.map(route => [route.handler, vi.fn()])) as
     Record<string, ReturnType<typeof vi.fn>>;
+  service.findByProfile = vi.fn();
 
   beforeAll(async () => {
     const module = await Test.createTestingModule({
@@ -115,6 +116,63 @@ describe('MessagesController routed local access authorization', () => {
       limit: 2,
       before: 'message-before',
     });
+  });
+
+  it('passes a bounded profile window only after profile ownership succeeds', async () => {
+    vi.mocked(prisma.profile.findFirst).mockResolvedValueOnce({ id: 'profile-a' } as any);
+    service.findByProfile.mockResolvedValueOnce([]);
+    const response = await app.inject({ method: 'GET',
+      url: '/api/v1/messages/profile/profile-a?conversationId=conversation-a&since=2026-09-29T11:00:00Z&until=2026-09-29T11:58:00Z&includeMedia=false' });
+    expect(response.statusCode).toBe(200);
+    expect(service.findByProfile).toHaveBeenCalledWith('profile-a', expect.objectContaining({
+      conversationId: 'conversation-a', since: new Date('2026-09-29T11:00:00Z'),
+      until: new Date('2026-09-29T11:58:00Z'), includeMedia: false,
+    }));
+  });
+
+  it.each(['invalid', '', '2026-09-29T10:00:00Z'])('rejects invalid or reversed upper bounds %s before service execution', async until => {
+    vi.mocked(prisma.profile.findFirst).mockResolvedValueOnce({ id: 'profile-a' } as any);
+    const response = await app.inject({ method: 'GET',
+      url: '/api/v1/messages/profile/profile-a?since=2026-09-29T11:00:00Z&until=' + encodeURIComponent(until) });
+    expect(response.statusCode).toBe(400);
+    expect(service.findByProfile).not.toHaveBeenCalled();
+  });
+
+  it('checks profile ownership before validating the upper bound', async () => {
+    vi.mocked(prisma.profile.findFirst).mockResolvedValueOnce(null);
+    const response = await app.inject({ method: 'GET', url: '/api/v1/messages/profile/profile-a?until=invalid' });
+    expect(response.statusCode).toBe(404);
+    expect(service.findByProfile).not.toHaveBeenCalled();
+  });
+
+  it('rejects repeated upper bounds instead of coercing them into a date', async () => {
+    vi.mocked(prisma.profile.findFirst).mockResolvedValueOnce({ id: 'profile-a' } as any);
+    const response = await app.inject({ method: 'GET',
+      url: '/api/v1/messages/profile/profile-a?until=2026&until=09' });
+    expect(response.statusCode).toBe(400);
+    expect(service.findByProfile).not.toHaveBeenCalled();
+  });
+
+  it('accepts equal inclusive bounds', async () => {
+    vi.mocked(prisma.profile.findFirst).mockResolvedValueOnce({ id: 'profile-a' } as any);
+    service.findByProfile.mockResolvedValueOnce([]);
+    const timestamp = '2026-09-29T11:00:00Z';
+    const response = await app.inject({ method: 'GET',
+      url: `/api/v1/messages/profile/profile-a?since=${timestamp}&until=${timestamp}` });
+    expect(response.statusCode).toBe(200);
+    expect(service.findByProfile).toHaveBeenCalledWith('profile-a', expect.objectContaining({
+      since: new Date(timestamp), until: new Date(timestamp),
+    }));
+  });
+
+  it('preserves profile reads that omit the upper bound', async () => {
+    vi.mocked(prisma.profile.findFirst).mockResolvedValueOnce({ id: 'profile-a' } as any);
+    service.findByProfile.mockResolvedValueOnce([]);
+    const response = await app.inject({ method: 'GET', url: '/api/v1/messages/profile/profile-a' });
+    expect(response.statusCode).toBe(200);
+    expect(service.findByProfile).toHaveBeenCalledWith('profile-a', expect.objectContaining({
+      since: undefined, until: undefined, includeMedia: true,
+    }));
   });
 
   it('rejects a non-integer conversation limit before service execution', async () => {

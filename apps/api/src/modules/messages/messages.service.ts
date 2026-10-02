@@ -373,13 +373,18 @@ export class MessagesService {
     direction?: string;
     conversationId?: string;
     since?: Date;
+    until?: Date;
     includeMedia?: boolean;
   }) {
     const where: any = { profileId };
     if (options.type) where.type = options.type;
     if (options.direction) where.direction = options.direction;
     if (options.conversationId) where.conversationId = options.conversationId;
-    if (options.since) where.timestamp = { gte: options.since };
+    if (options.since || options.until) {
+      where.timestamp = {};
+      if (options.since) where.timestamp.gte = options.since;
+      if (options.until) where.timestamp.lte = options.until;
+    }
 
     const messages = await prisma.message.findMany({
       where,

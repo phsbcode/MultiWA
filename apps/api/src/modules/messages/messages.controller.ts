@@ -180,6 +180,7 @@ export class MessagesController {
   @ApiQuery({ name: 'conversationId', required: false,
     description: 'Limit profile messages to one owned conversation' })
   @ApiQuery({ name: 'since', required: false, description: 'Return messages at or after this ISO timestamp' })
+  @ApiQuery({ name: 'until', required: false, description: 'Return messages at or before this ISO timestamp' })
   @ApiQuery({ name: 'includeMedia', required: false, enum: ['true', 'false'],
     description: 'Set false to replace media payloads with fingerprints and byte sizes' })
   async findByProfile(
@@ -191,15 +192,26 @@ export class MessagesController {
     @Query('conversationId') conversationId?: string,
     @Query('since') since?: string,
     @Query('includeMedia') includeMedia?: string,
+    @Query('until') until?: unknown,
   ) {
     const sinceDate = since ? new Date(since) : undefined;
     if (sinceDate && Number.isNaN(sinceDate.getTime())) {
       throw new BadRequestException('since must be a valid ISO timestamp');
     }
+    if (until !== undefined && typeof until !== 'string') {
+      throw new BadRequestException('until must be a valid ISO timestamp');
+    }
+    const untilDate = typeof until === 'string' && until ? new Date(until) : undefined;
+    if (until !== undefined && (!untilDate || Number.isNaN(untilDate.getTime()))) {
+      throw new BadRequestException('until must be a valid ISO timestamp');
+    }
+    if (sinceDate && untilDate && untilDate < sinceDate) {
+      throw new BadRequestException('until must be at or after since');
+    }
     if (includeMedia !== undefined && includeMedia !== 'true' && includeMedia !== 'false') {
       throw new BadRequestException('includeMedia must be true or false');
     }
-    return this.service.findByProfile(profileId, { limit, offset, type, direction, conversationId, since: sinceDate,
+    return this.service.findByProfile(profileId, { limit, offset, type, direction, conversationId, since: sinceDate, until: untilDate,
       includeMedia: includeMedia !== 'false' });
   }
 

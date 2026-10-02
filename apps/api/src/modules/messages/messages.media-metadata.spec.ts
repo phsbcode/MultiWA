@@ -50,6 +50,27 @@ describe('MessagesService media metadata reads', () => {
     });
   });
 
+  it('applies both inclusive window bounds inside the selected profile and conversation', async () => {
+    findMany.mockResolvedValue([]);
+    const since = new Date('2026-09-29T11:00:00Z');
+    const until = new Date('2026-09-29T11:58:00Z');
+    await new MessagesService({} as any).findByProfile('profile-1', {
+      conversationId: 'conversation-1', since, until, includeMedia: false, limit: 10, offset: 20,
+    });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
+      profileId: 'profile-1', conversationId: 'conversation-1', timestamp: { gte: since, lte: until },
+    }, take: 10, skip: 20, orderBy: { timestamp: 'desc' } }));
+  });
+
+  it('supports an upper bound without a lower bound', async () => {
+    findMany.mockResolvedValue([]);
+    const until = new Date('2026-09-29T11:58:00Z');
+    await new MessagesService({} as any).findByProfile('profile-1', { until });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
+      profileId: 'profile-1', timestamp: { lte: until },
+    } }));
+  });
+
   it('rejects malformed or mixed-profile media IDs without a partial response', async () => {
     const service = new MessagesService({} as any);
     await expect(service.findMediaByProfile('profile-1', ['message-1', '']))

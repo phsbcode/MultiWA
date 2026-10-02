@@ -3327,6 +3327,13 @@
           "required": false,
           "namespace": "dto:string",
           "parent": ""
+        },
+        {
+          "location": "query",
+          "name": "until",
+          "required": false,
+          "namespace": "dto:unknown",
+          "parent": ""
         }
       ],
       "ownershipEvidence": [
@@ -3339,7 +3346,7 @@
       "clients": [
         "dnt-payments-monitor"
       ],
-      "notes": "Reviewed: TenantGuard authorizes the path profileId against the authenticated organization before service execution. Optional conversationId intersects that exact profile in the database query; missing or other-profile conversations return an empty list without disclosing their existence. since is independent and optional. scripts/authz-characterization.mjs verifies JWT/API-key, foreign-profile denial, same/foreign-organization conversation filters and zero business writes against an isolated database."
+      "notes": "Reviewed: TenantGuard authorizes the path profileId against the authenticated organization before service execution. Optional conversationId intersects that exact profile in the database query; missing or other-profile conversations return an empty list without disclosing their existence. since and until are independent optional inclusive timestamp bounds; invalid, empty or repeated upper bounds and reversed windows are rejected after ownership verification and before service execution. until retains its raw query type through Nest conversion before string validation. scripts/authz-characterization.mjs verifies JWT/API-key, foreign-profile denial, same/foreign-organization conversation filters and zero business writes against an isolated database."
     },
     {
       "key": "GET /api/v1/messages/schedule/:profileId",

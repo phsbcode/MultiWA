@@ -307,6 +307,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
           isLoggedOut,
           lastDisconnect?.error?.message,
           statusCode,
+          lastDisconnect?.error,
         );
         this.status = { isConnected: false, isAuthenticated: false };
         this.config?.onDisconnected?.(disconnectReason);

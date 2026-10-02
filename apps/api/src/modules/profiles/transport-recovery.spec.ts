@@ -218,3 +218,37 @@ it('classifies only known transport reasons as retryable', () => {
   expect(classifyRecoveryFailure('Connection Failure')).toBe('UNKNOWN_FAILURE');
   expect(classifyRecoveryFailure('Forbidden 403')).toBe('FORBIDDEN');
 });
+
+it('verified provider service-unavailable losses use the same durable three-attempt budget', async () => {
+  const f = fixture(); await f.recovery.explicitConnect(); await f.ready();
+  const reason = 'Provider Service Unavailable (503)';
+  expect(classifyRecoveryFailure(reason)).toBe('transport');
+  let first: string | null = null;
+  for (const [index, delay] of [15000, 60000, 180000].entries()) {
+    await f.drop(reason); first ||= f.saved().firstGapAt;
+    await vi.advanceTimersByTimeAsync(delay - 1);
+    expect(f.hooks.connect).toHaveBeenCalledTimes(index + 1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(f.saved().attemptsUsed).toBe(index + 1);
+    expect(f.attempt().allowPairing).toBe(false);
+    await f.ready(); await vi.advanceTimersByTimeAsync(1000);
+    expect(f.saved().firstGapAt).toBe(first);
+  }
+  await f.drop(reason);
+  expect(f.saved()).toMatchObject({ phase: 'paused', pauseReason: 'RETRIES_EXHAUSTED', attemptsUsed: 3 });
+  await vi.advanceTimersByTimeAsync(3600000);
+  expect(f.hooks.connect).toHaveBeenCalledTimes(4);
+});
+it('verified 503 losses still open the four-loss frequency circuit after stable budget resets', async () => {
+  const f = fixture(); await f.recovery.explicitConnect();
+  for (let i = 0; i < 4; i++) {
+    await f.ready(); await vi.advanceTimersByTimeAsync(RECOVERY_STABLE_MS);
+    await f.drop('Provider Service Unavailable (503)');
+    if (i < 3) await vi.advanceTimersByTimeAsync(15000);
+  }
+  expect(f.saved()).toMatchObject({ phase: 'paused', pauseReason: 'FREQUENT_DISCONNECTS', attemptsUsed: 0 });
+  expect(f.saved().disconnects).toHaveLength(4);
+  await vi.advanceTimersByTimeAsync(3600000);
+  expect(f.hooks.connect).toHaveBeenCalledTimes(4);
+  expect(classifyRecoveryFailure('Stream Errored (unknown)')).toBe('UNKNOWN_FAILURE');
+});
