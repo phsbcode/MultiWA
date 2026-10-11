@@ -13,7 +13,7 @@ integration('acknowledgement profile isolation with PostgreSQL', () => {
 
   beforeAll(async () => {
     ({ prisma } = await import('@multiwa/database'));
-    ({ applyMessageAck } = await import('./ack-status'));
+    ({ applyMessageAck } = await import('./ack-status.js'));
     for (let index = 0; index < 2; index += 1) {
       await prisma.profile.create({ data: { id: ids.profiles[index] } });
       await prisma.conversation.create({ data: {

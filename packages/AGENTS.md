@@ -19,6 +19,8 @@ Shared libraries, domain logic, database layer, WhatsApp engine adapters, SDKs, 
 
 ## Local Contracts
 
+- Engines uses Node20 emit with Node16 resolution for TypeScript 7 comparison, retaining its existing catch-variable and function-variance defaults. Validate emitted CommonJS and ESM-provider interoperability before adoption.
+
 - `core/` has no external dependencies; defines interfaces that adapters implement
 - `database/` is the sole Prisma schema owner; all DB access goes through it
 - `engines/` factory (`src/factory/engine-factory.ts`) selects adapter by profile type

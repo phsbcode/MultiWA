@@ -23,7 +23,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
   private async connectRedis(): Promise<void> {
     try {
       // Dynamic import to avoid hard dependency on ioredis
-      const Redis = (await import('ioredis')).default;
+      const { Redis } = await import('ioredis');
       this.redis = new Redis(this.redisUrl, {
         maxRetriesPerRequest: 3,
         retryStrategy: (times: number) => {
