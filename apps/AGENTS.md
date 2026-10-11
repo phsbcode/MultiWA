@@ -12,6 +12,8 @@ Application layer of MultiWA: the NestJS REST API gateway, the Next.js admin das
 
 ## Local Contracts
 
+- Compiler configs support comparison with TypeScript 7: admin aliases are relative to its tsconfig; CSS imports have ambient declarations. API uses Node20 emit with Node16 resolution and explicitly preserves its existing catch-variable and function-variance defaults. Module-mode changes require build and test validation before adoption.
+
 - All apps use TypeScript strict mode
 - API depends on `@multiwa/core`, `@multiwa/database`, `@multiwa/engines`
 - Admin communicates with API via REST + WebSocket (Socket.IO client)
