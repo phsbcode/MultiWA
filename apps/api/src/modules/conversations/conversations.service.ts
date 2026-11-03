@@ -72,7 +72,12 @@ export class ConversationsService {
           SELECT m."id", m."profileId", m."conversationId", m."messageId",
                  m."direction", m."senderJid", m."type", m."status",
                  m."quotedMessageId", m."timestamp", m."createdAt",
-                 m."content"::text AS "content", m."metadata"::text AS "metadata"
+                 CASE
+                   WHEN m."type" IN ('image', 'video', 'audio', 'document', 'sticker', 'ptt')
+                     AND jsonb_typeof(m."content") = 'object'
+                   THEN (m."content" - 'url' - 'base64')::text
+                   ELSE m."content"::text
+                 END AS "content", m."metadata"::text AS "metadata"
           FROM messages m
           WHERE m."id" = ANY($1)
         `, lastIds.map(l => l.id));
@@ -80,7 +85,14 @@ export class ConversationsService {
           // Parse jsonb fields back since we got them as text
           try { m.content = typeof m.content === 'string' ? JSON.parse(m.content) : m.content; } catch {}
           try { m.metadata = typeof m.metadata === 'string' ? JSON.parse(m.metadata) : m.metadata; } catch {}
-          lastMessageMap.set(m.conversationId, m);
+          // The list is a preview boundary, even if a future query returns full media.
+          if (['image', 'video', 'audio', 'document', 'sticker', 'ptt'].includes(m.type) &&
+              m.content && typeof m.content === 'object' && !Array.isArray(m.content)) {
+            const { url, base64, ...preview } = m.content;
+            lastMessageMap.set(m.conversationId, { ...m, content: preview });
+          } else {
+            lastMessageMap.set(m.conversationId, m);
+          }
         }
       }
     }

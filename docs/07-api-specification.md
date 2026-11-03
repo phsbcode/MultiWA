@@ -260,6 +260,13 @@ referenced conversation; replies and reactions derive their destination from it.
 | `DELETE` | `/conversations/:id` | Delete conversation |
 | `DELETE` | `/conversations/:id/messages` | Clear messages in conversation |
 
+Conversation lists return a preview of `lastMessage`. Embedded media fields
+`content.url` and `content.base64` are omitted for image, video, audio, document,
+sticker and voice-message previews. Text, captions, filenames, MIME types and
+message identity/status fields are preserved. Fetch original media through the
+authorized message/detail or profile-media endpoints. Listing never edits or
+deletes the stored message or file.
+
 The seven conversation mutation routes verify that `:id` belongs to the
 authenticated caller's organization before calling the conversation service. JWT
 and API-key callers may mutate conversations under another profile in their own

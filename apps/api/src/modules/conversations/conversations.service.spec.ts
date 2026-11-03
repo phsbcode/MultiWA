@@ -45,6 +45,38 @@ describe('ConversationsService', () => {
     service = new ConversationsService(groupsService as any);
   });
 
+  it.each(['image', 'video', 'audio', 'document', 'sticker', 'ptt'])(
+    'omits encoded %s payloads from conversation previews without modifying originals',
+    async (type) => {
+      const encoded = 'A'.repeat(1024 * 1024);
+      const content = { url: `data:video/quicktime;base64,${encoded}`, base64: encoded,
+        caption: 'Synthetic caption', filename: 'original.mov', mimetype: 'video/quicktime' };
+      const message = { id: 'media-1', profileId: 'profile-1', conversationId: 'conv-1',
+        type, direction: 'incoming', status: 'received', content: JSON.stringify(content), metadata: '{}' };
+      vi.mocked(prisma.conversation.findMany).mockResolvedValueOnce([
+        { id: 'conv-1', profileId: 'profile-1', jid: 'synthetic@g.us', name: 'Synthetic Team',
+          type: 'group', contact: null, _count: { messages: 1 } },
+      ] as any);
+      vi.mocked(prisma.conversation.count).mockResolvedValueOnce(1);
+      vi.mocked(prisma.$queryRawUnsafe)
+        .mockResolvedValueOnce([{ conversationId: 'conv-1', id: 'media-1' }])
+        .mockResolvedValueOnce([message]);
+
+      const result = await service.findAll('profile-1', {});
+
+      expect(result.conversations[0].lastMessage).toMatchObject({ id: 'media-1', type,
+        direction: 'incoming', status: 'received', content: {
+          caption: 'Synthetic caption', filename: 'original.mov', mimetype: 'video/quicktime',
+        } });
+      expect(result.conversations[0].lastMessage.content).not.toHaveProperty('url');
+      expect(result.conversations[0].lastMessage.content).not.toHaveProperty('base64');
+      expect(JSON.stringify(result).length).toBeLessThan(4096);
+      expect((message.content as any).url).toBe(content.url);
+      expect((message.content as any).base64).toBe(encoded);
+      expect(prisma.conversation.update).not.toHaveBeenCalled();
+    },
+  );
+
   it('scopes a pagination cursor to the authorized conversation', async () => {
     vi.mocked(prisma.message.findFirst).mockResolvedValueOnce({
       timestamp: new Date('2026-09-07T01:00:00Z'),
